@@ -144,7 +144,7 @@ def compute_metrics_on_folder(folder_ref: str, folder_pred: str, output_file: st
         #     compute_metrics(*i)
         results = pool.starmap(
             compute_metrics,
-            list(zip(files_ref, files_pred, [image_reader_writer] * len(files_pred), [regions_or_labels] * len(files_pred),
+            tuple(zip(files_ref, files_pred, [image_reader_writer] * len(files_pred), [regions_or_labels] * len(files_pred),
                      [ignore_label] * len(files_pred)))
         )
 

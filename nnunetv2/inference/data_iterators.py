@@ -135,7 +135,7 @@ class PreprocessAdapter(DataLoader):
         if output_filenames_truncated is None:
             output_filenames_truncated = [None] * len(list_of_lists)
 
-        super().__init__(list(zip(list_of_lists, list_of_segs_from_prev_stage_files, output_filenames_truncated)),
+        super().__init__(tuple(zip(list_of_lists, list_of_segs_from_prev_stage_files, output_filenames_truncated)),
                          1, num_threads_in_multithreaded,
                          seed_for_shuffle=1, return_incomplete=True,
                          shuffle=False, infinite=False, sampling_probabilities=None)
@@ -181,7 +181,7 @@ class PreprocessAdapterFromNpy(DataLoader):
             truncated_ofnames = [None] * len(list_of_images)
 
         super().__init__(
-            list(zip(list_of_images, list_of_segs_from_prev_stage, list_of_image_properties, truncated_ofnames)),
+            tuple(zip(list_of_images, list_of_segs_from_prev_stage, list_of_image_properties, truncated_ofnames)),
             1, num_threads_in_multithreaded,
             seed_for_shuffle=1, return_incomplete=True,
             shuffle=False, infinite=False, sampling_probabilities=None)
