@@ -1,3 +1,4 @@
+import gc
 from collections import OrderedDict
 from typing import Union, Tuple, List, Sequence
 
@@ -22,8 +23,7 @@ def get_lowres_axis(new_spacing: np.ndarray):
 def compute_new_shape(old_shape: Union[Tuple[int, ...], List[int], np.ndarray],
                       old_spacing: Union[Tuple[float, ...], List[float], np.ndarray],
                       new_spacing: Union[Tuple[float, ...], List[float], np.ndarray]) -> np.ndarray:
-    assert len(old_spacing) == len(old_shape)
-    assert len(old_shape) == len(new_spacing)
+    assert len(old_spacing) == len(old_shape) == len(new_spacing)
     new_shape = np.array([int(round(i / j * k)) for i, j, k in zip(old_spacing, new_spacing, old_shape)])
     return new_shape
 
@@ -36,6 +36,7 @@ def resample_data_or_seg_to_spacing(data: np.ndarray,
                                     force_separate_z: Union[bool, None] = False,
                                     separate_z_anisotropy_threshold: float = ANISO_THRESHOLD):
     current_spacing = np.asarray(current_spacing)
+    new_spacing = np.asarray(new_spacing)
     if force_separate_z is not None:
         do_separate_z = force_separate_z
         if force_separate_z:
@@ -86,6 +87,7 @@ def resample_data_or_seg_to_shape(data: Union[torch.Tensor, np.ndarray],
     needed for segmentation export. Stupid, I know. Maybe we can fix that with Leos new resampling functions
     """
     current_spacing = np.asarray(current_spacing)
+    new_spacing = np.asarray(new_spacing)
     if isinstance(data, torch.Tensor):
         data = data.cpu().numpy()
     if force_separate_z is not None:
@@ -162,6 +164,7 @@ def resample_data_or_seg(data: np.ndarray, new_shape: Union[Tuple[float, ...], L
             for c in range(data.shape[0]):
                 reshaped_data = []
                 for slice_id in range(shape[axis]):
+                    gc.collect()
                     if axis == 0:
                         reshaped_data.append(resize_fn(data[c, slice_id], new_shape_2d, order, **kwargs))
                     elif axis == 1:

@@ -1,3 +1,4 @@
+import gc
 import os
 from copy import deepcopy
 from typing import Union, List
@@ -33,8 +34,10 @@ def convert_predicted_logits_to_segmentation_with_correct_shape(predicted_logits
                                             properties_dict['spacing'])
     # return value of resampling_fn_probabilities can be ndarray or Tensor but that does not matter because
     # apply_inference_nonlin will convert to torch
+    gc.collect()
     predicted_probabilities = label_manager.apply_inference_nonlin(predicted_logits)
     del predicted_logits
+    gc.collect()
     segmentation = label_manager.convert_probabilities_to_segmentation(predicted_probabilities)
 
     # segmentation may be torch.Tensor but we continue with numpy
@@ -85,6 +88,7 @@ def export_prediction_from_logits(predicted_array_or_file: Union[np.ndarray, tor
         dataset_json_dict_or_file = load_json(dataset_json_dict_or_file)
 
     label_manager = plans_manager.get_label_manager(dataset_json_dict_or_file)
+    gc.collect()
     ret = convert_predicted_logits_to_segmentation_with_correct_shape(
         predicted_array_or_file, plans_manager, configuration_manager, label_manager, properties_dict,
         return_probabilities=save_probabilities
