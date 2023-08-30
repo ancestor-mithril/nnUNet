@@ -1,5 +1,5 @@
 from collections import OrderedDict
-from typing import Union, Tuple, List
+from typing import Union, Tuple, List, Sequence
 
 import numpy as np
 import pandas as pd
@@ -10,14 +10,13 @@ from skimage.transform import resize
 from nnunetv2.configuration import ANISO_THRESHOLD
 
 
-def get_do_separate_z(spacing: Union[Tuple[float, ...], List[float], np.ndarray], anisotropy_threshold=ANISO_THRESHOLD):
-    do_separate_z = (np.max(spacing) / np.min(spacing)) > anisotropy_threshold
-    return do_separate_z
+def get_do_separate_z(spacing: np.ndarray, anisotropy_threshold=ANISO_THRESHOLD):
+    return (np.max(spacing) / np.min(spacing)) > anisotropy_threshold
 
 
-def get_lowres_axis(new_spacing: Union[Tuple[float, ...], List[float], np.ndarray]):
-    axis = np.where(max(new_spacing) / np.array(new_spacing) == 1)[0]  # find which axis is anisotropic
-    return axis
+def get_lowres_axis(new_spacing: np.ndarray):
+    # prev: np.where(new_spacing.max() / new_spacing == 1)[0]
+    return np.where(new_spacing == new_spacing.max())[0]  # find which axis is anisotropic
 
 
 def compute_new_shape(old_shape: Union[Tuple[int, ...], List[int], np.ndarray],
@@ -36,6 +35,7 @@ def resample_data_or_seg_to_spacing(data: np.ndarray,
                                     order: int = 3, order_z: int = 0,
                                     force_separate_z: Union[bool, None] = False,
                                     separate_z_anisotropy_threshold: float = ANISO_THRESHOLD):
+    current_spacing = np.asarray(current_spacing)
     if force_separate_z is not None:
         do_separate_z = force_separate_z
         if force_separate_z:
@@ -85,6 +85,7 @@ def resample_data_or_seg_to_shape(data: Union[torch.Tensor, np.ndarray],
     """
     needed for segmentation export. Stupid, I know. Maybe we can fix that with Leos new resampling functions
     """
+    current_spacing = np.asarray(current_spacing)
     if isinstance(data, torch.Tensor):
         data = data.cpu().numpy()
     if force_separate_z is not None:
@@ -115,15 +116,11 @@ def resample_data_or_seg_to_shape(data: Union[torch.Tensor, np.ndarray],
         else:
             pass
 
-    if data is not None:
-        assert data.ndim == 4, "data must be c x y z"
-
-    data_reshaped = resample_data_or_seg(data, new_shape, is_seg, axis, order, do_separate_z, order_z=order_z)
-    return data_reshaped
+    return resample_data_or_seg(data, new_shape, is_seg, axis, order, do_separate_z, order_z=order_z)
 
 
 def resample_data_or_seg(data: np.ndarray, new_shape: Union[Tuple[float, ...], List[float], np.ndarray],
-                         is_seg: bool = False, axis: Union[None, int] = None, order: int = 3,
+                         is_seg: bool = False, axis: Union[Sequence[int], None] = None, order: int = 3,
                          do_separate_z: bool = False, order_z: int = 0):
     """
     separate_z=True will resample with order 0 along z
@@ -148,7 +145,7 @@ def resample_data_or_seg(data: np.ndarray, new_shape: Union[Tuple[float, ...], L
     dtype_data = data.dtype
     shape = np.array(data[0].shape)
     new_shape = np.array(new_shape)
-    if np.any(shape != new_shape):
+    if not np.array_equal(shape, new_shape):
         data = data.astype(float)
         if do_separate_z:
             # print("separate z, order in z is", order_z, "order inplane is", order)
@@ -192,10 +189,10 @@ def resample_data_or_seg(data: np.ndarray, new_shape: Union[Tuple[float, ...], L
                         reshaped_final_data.append(map_coordinates(reshaped_data, coord_map, order=order_z,
                                                                    mode='nearest')[None])
                     else:
-                        unique_labels = np.sort(pd.unique(reshaped_data.ravel()))  # np.unique(reshaped_data)
+                        unique_labels = pd.unique(reshaped_data.ravel())  # does not need sorting
                         reshaped = np.zeros(new_shape, dtype=dtype_data)
 
-                        for i, cl in enumerate(unique_labels):
+                        for cl in unique_labels:
                             reshaped_multihot = np.round(
                                 map_coordinates((reshaped_data == cl).astype(float), coord_map, order=order_z,
                                                 mode='nearest'))

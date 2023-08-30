@@ -135,8 +135,7 @@ class LabelManager(object):
 
         with torch.no_grad():
             # softmax etc is not implemented for half
-            logits = logits.float()
-            probabilities = self.inference_nonlin(logits)
+            probabilities = self.inference_nonlin(logits.float())
 
         return probabilities
 
@@ -147,10 +146,6 @@ class LabelManager(object):
 
         predicted_probabilities has to have shape (c, x, y(, z)) where c is the number of classes/regions
         """
-        if not isinstance(predicted_probabilities, (np.ndarray, torch.Tensor)):
-            raise RuntimeError(f"Unexpected input type. Expected np.ndarray or torch.Tensor,"
-                               f" got {type(predicted_probabilities)}")
-
         if self.has_regions:
             assert self.regions_class_order is not None, 'if region-based training is requested then you need to ' \
                                                          'define regions_class_order!'

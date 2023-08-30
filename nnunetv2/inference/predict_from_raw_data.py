@@ -260,6 +260,8 @@ class nnUNetPredictor(object):
         preprocessor = configuration_manager.preprocessor_class(verbose=self.verbose_preprocessing)
         plans_manager = self.plans_manager
         dataset_json = self.dataset_json
+        if isinstance(dataset_json, str):
+            dataset_json = load_json(dataset_json)
         label_manager = plans_manager.get_label_manager(dataset_json)
 
         for i in range(len(input_list_of_lists)):
@@ -283,7 +285,7 @@ class nnUNetPredictor(object):
             else:
                 print(f'\nPredicting image of shape {data.shape}:')
 
-            prediction = self.predict_logits_from_preprocessed_data(data).cpu()
+            prediction = self.predict_logits_from_preprocessed_data(data)
 
             if ofile is not None:
                 print('sending off prediction to background worker for resampling and export')
@@ -419,7 +421,7 @@ class nnUNetPredictor(object):
                     sleep(0.1)
                     proceed = not check_workers_alive_and_busy(export_pool, worker_list, r, allowed_num_queued=2)
 
-                prediction = self.predict_logits_from_preprocessed_data(data).cpu()
+                prediction = self.predict_logits_from_preprocessed_data(data)
 
                 if ofile is not None:
                     # this needs to go into background processes
@@ -480,7 +482,7 @@ class nnUNetPredictor(object):
 
         if self.verbose:
             print('predicting')
-        predicted_logits = self.predict_logits_from_preprocessed_data(dct['data']).cpu()
+        predicted_logits = self.predict_logits_from_preprocessed_data(dct['data'])
 
         if self.verbose:
             print('resampling to original shape')
@@ -639,9 +641,10 @@ class nnUNetPredictor(object):
             with torch.autocast(self.device.type, enabled=True) if self.device.type == 'cuda' else dummy_context():
                 assert input_image.ndim == 4, 'input_image must be a 4D np.ndarray or torch.Tensor (c, x, y, z)'
 
-                if self.verbose: print(f'Input shape: {input_image.shape}')
-                if self.verbose: print("step_size:", self.tile_step_size)
-                if self.verbose: print("mirror_axes:", self.allowed_mirroring_axes if self.use_mirroring else None)
+                if self.verbose:
+                    print(f'Input shape: {input_image.shape}')
+                    print("step_size:", self.tile_step_size)
+                    print("mirror_axes:", self.allowed_mirroring_axes if self.use_mirroring else None)
 
                 # if input_image is smaller than tile_size we need to pad it to tile_size.
                 data, slicer_revert_padding = pad_nd_image(input_image, self.configuration_manager.patch_size,
@@ -654,7 +657,7 @@ class nnUNetPredictor(object):
                 results_device = self.device if self.perform_everything_on_gpu else torch.device('cpu')
                 if self.verbose: print('preallocating arrays')
                 try:
-                    data = data.to(self.device)
+                    data = data.to(self.device, non_blocking=True)
                     predicted_logits = torch.zeros((self.label_manager.num_segmentation_heads, *data.shape[1:]),
                                                    dtype=torch.half,
                                                    device=results_device)
