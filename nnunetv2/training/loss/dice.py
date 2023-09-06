@@ -83,9 +83,8 @@ class MemoryEfficientSoftDiceLoss(nn.Module):
                 # if this is the case then gt is probably already a one hot encoding
                 y_onehot = y
             else:
-                gt = y.long()
                 y_onehot = torch.zeros(x.shape, device=x.device, dtype=torch.bool)
-                y_onehot.scatter_(1, gt, 1)
+                y_onehot.scatter_(1,  y.long(), 1)
 
             if not self.do_bg:
                 y_onehot = y_onehot[:, 1:]
@@ -137,13 +136,12 @@ def get_tp_fp_fn_tn(net_output, gt, axes=None, mask=None, square=False):
         if len(shp_x) != len(shp_y):
             gt = gt.view((shp_y[0], 1, *shp_y[1:]))
 
-        if net_output.shape == gt.shape:
+        if shp_x == gt.shape:
             # if this is the case then gt is probably already a one hot encoding
             y_onehot = gt
         else:
-            gt = gt.long()
             y_onehot = torch.zeros(shp_x, device=net_output.device)
-            y_onehot.scatter_(1, gt, 1)
+            y_onehot.scatter_(1, gt.long(), 1)
 
     tp = net_output * y_onehot
     fp = net_output * (1 - y_onehot)
