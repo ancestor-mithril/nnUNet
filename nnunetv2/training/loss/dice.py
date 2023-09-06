@@ -127,7 +127,7 @@ def get_tp_fp_fn_tn(net_output, gt, axes=None, mask=None, square=False):
     :return:
     """
     if axes is None:
-        axes = tuple(range(2, len(net_output.size())))
+        axes = tuple(range(2, net_output.dim))
 
     shp_x = net_output.shape
     shp_y = gt.shape
@@ -150,7 +150,7 @@ def get_tp_fp_fn_tn(net_output, gt, axes=None, mask=None, square=False):
 
     if mask is not None:
         with torch.no_grad():
-            mask_here = torch.tile(mask, (1, tp.shape[1], *[1 for i in range(2, len(tp.shape))]))
+            mask_here = torch.tile(mask, (1, tp.shape[1], *[1 for _ in range(2, tp.dim)]))
         tp *= mask_here
         fp *= mask_here
         fn *= mask_here

@@ -76,8 +76,11 @@ class nnUNetDataLoaderBase(DataLoader):
 
         # we can now choose the bbox from -need_to_pad // 2 to shape - patch_size + need_to_pad // 2. Here we
         # define what the upper and lower bound can be to then sample form them with np.random.randint
-        lbs = [- need_to_pad[i] // 2 for i in range(dim)]
-        ubs = [data_shape[i] + need_to_pad[i] // 2 + need_to_pad[i] % 2 - self.patch_size[i] for i in range(dim)]
+        need_to_pad = np.asarray(need_to_pad)
+        div = need_to_pad // 2
+        remainder = need_to_pad % 2
+        lbs = -div
+        ubs = data_shape + div + remainder - self.patch_size
 
         # if not force_fg then we can just sample the bbox randomly from lb and ub. Else we need to make sure we get
         # at least one of the foreground classes in the patch
