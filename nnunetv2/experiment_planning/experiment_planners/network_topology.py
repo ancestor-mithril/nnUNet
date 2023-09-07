@@ -37,11 +37,10 @@ def get_pool_and_conv_props(spacing, patch_size, min_feature_map_size, max_numpo
     :param max_numpool:
     :return:
     """
-    # todo review this code
     dim = len(spacing)
 
-    current_spacing = deepcopy(list(spacing))
-    current_size = deepcopy(list(patch_size))
+    current_spacing = list(spacing)
+    current_size = list(patch_size)
 
     pool_op_kernel_sizes = [[1] * len(spacing)]
     conv_kernel_sizes = []

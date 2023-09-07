@@ -93,7 +93,7 @@ def preprocess_dataset(dataset_id: int,
         num_processes = list(num_processes)
     if len(num_processes) == 1:
         num_processes = num_processes * len(configurations)
-    if len(num_processes) != len(configurations):
+    elif len(num_processes) != len(configurations):
         raise RuntimeError(
             f'The list provided with num_processes must either have len 1 or as many elements as there are '
             f'configurations (see --help). Number of configurations: {len(configurations)}, length '

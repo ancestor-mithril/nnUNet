@@ -948,9 +948,10 @@ class nnUNetTrainer(object):
 
         if self.label_manager.has_ignore_label:
             if not self.label_manager.has_regions:
-                mask = (target != self.label_manager.ignore_label).float()
+                mask = target == self.label_manager.ignore_label
                 # CAREFUL that you don't rely on target after this line!
-                target[target == self.label_manager.ignore_label] = 0
+                target[mask] = 0
+                mask = mask.logical_not_().to(torch.float32)
             else:
                 mask = 1 - target[:, -1:]
                 # CAREFUL that you don't rely on target after this line!

@@ -23,9 +23,8 @@ def get_lowres_axis(new_spacing: np.ndarray):
 def compute_new_shape(old_shape: Union[Tuple[int, ...], List[int], np.ndarray],
                       old_spacing: Union[Tuple[float, ...], List[float], np.ndarray],
                       new_spacing: Union[Tuple[float, ...], List[float], np.ndarray]) -> np.ndarray:
-    assert len(old_spacing) == len(old_shape) == len(new_spacing)
-    new_shape = np.array([int(round(i / j * k)) for i, j, k in zip(old_spacing, new_spacing, old_shape)])
-    return new_shape
+    old_spacing = np.asarray(old_spacing)
+    return (old_spacing / new_spacing * old_shape).round().astype(int)  # exception if sizes are not the same
 
 
 def resample_data_or_seg_to_spacing(data: np.ndarray,
@@ -145,8 +144,8 @@ def resample_data_or_seg(data: np.ndarray, new_shape: Union[Tuple[float, ...], L
         resize_fn = resize
         kwargs = {'mode': 'edge', 'anti_aliasing': False}
     dtype_data = data.dtype
-    shape = np.array(data[0].shape)
-    new_shape = np.array(new_shape)
+    shape = data[0].shape
+    new_shape = np.asarray(new_shape)
     if not np.array_equal(shape, new_shape):
         data = data.astype(float)
         if do_separate_z:

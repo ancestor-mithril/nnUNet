@@ -132,19 +132,18 @@ class DatasetFingerprintExtractor(object):
                 workers = [j for j in p._pool]
                 with tqdm(desc=None, total=len(self.dataset), disable=self.verbose) as pbar:
                     while len(remaining) > 0:
-                        all_alive = all([j.is_alive() for j in workers])
-                        if not all_alive:
-                            raise RuntimeError('Some background worker is 6 feet under. Yuck. \n'
-                                               'OK jokes aside.\n'
-                                               'One of your background processes is missing. This could be because of '
-                                               'an error (look for an error message) or because it was killed '
-                                               'by your OS due to running out of RAM. If you don\'t see '
-                                               'an error message, out of RAM is likely the problem. In that case '
-                                               'reducing the number of workers might help')
-                        done = [i for i in remaining if r[i].ready()]
-                        for _ in done:
-                            pbar.update()
-                        remaining = [i for i in remaining if i not in done]
+                        for j in workers:
+                            if not j.is_alive():
+                                raise RuntimeError('Some background worker is 6 feet under. Yuck. \n'
+                                                   'OK jokes aside.\n'
+                                                   'One of your background processes is missing. This could be because of '
+                                                   'an error (look for an error message) or because it was killed '
+                                                   'by your OS due to running out of RAM. If you don\'t see '
+                                                   'an error message, out of RAM is likely the problem. In that case '
+                                                   'reducing the number of workers might help')
+                        n = len(remaining)
+                        remaining = [i for i in remaining if not r[i].ready()]
+                        pbar.update(n - len(remaining))
                         sleep(0.1)
 
             # results = ptqdm(DatasetFingerprintExtractor.analyze_case,
@@ -165,15 +164,19 @@ class DatasetFingerprintExtractor(object):
                                  if 'channel_names' in self.dataset_json.keys()
                                  else self.dataset_json['modality'].keys())
             intensity_statistics_per_channel = {}
+            foreground_intensities_per_channel = np.array(foreground_intensities_per_channel)
+            percentiles = np.array((0.5, 50.0, 99.5))
             for i in range(num_channels):
+                percentile_00_5, median, percentile_99_5 = np.percentile(
+                    foreground_intensities_per_channel[i], percentiles)
                 intensity_statistics_per_channel[i] = {
                     'mean': float(np.mean(foreground_intensities_per_channel[i])),
-                    'median': float(np.median(foreground_intensities_per_channel[i])),
+                    'median': float(median),
                     'std': float(np.std(foreground_intensities_per_channel[i])),
                     'min': float(np.min(foreground_intensities_per_channel[i])),
                     'max': float(np.max(foreground_intensities_per_channel[i])),
-                    'percentile_99_5': float(np.percentile(foreground_intensities_per_channel[i], 99.5)),
-                    'percentile_00_5': float(np.percentile(foreground_intensities_per_channel[i], 0.5)),
+                    'percentile_99_5': float(percentile_99_5),
+                    'percentile_00_5': float(percentile_00_5),
                 }
 
             fingerprint = {
