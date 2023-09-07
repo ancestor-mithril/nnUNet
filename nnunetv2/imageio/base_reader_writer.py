@@ -21,9 +21,8 @@ import numpy as np
 class BaseReaderWriter(ABC):
     @staticmethod
     def _check_all_same(input_list):
-        first = input_list[0]
         for i in input_list[1:]:
-            if i != first:
+            if i != input_list[0]:
                 return False
         return True
         # compare all entries to the first
@@ -34,9 +33,8 @@ class BaseReaderWriter(ABC):
 
     @staticmethod
     def _check_all_same_array(input_list):
-        first = input_list[0]
         for i in input_list[1:]:
-            if first.shape != i.shape or np.allclose(i, first):
+            if input_list[0].shape != i.shape or not np.allclose(i, input_list[0]):
                 return False
         return True
         # compare all entries to the first
