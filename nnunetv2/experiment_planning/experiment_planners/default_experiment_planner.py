@@ -223,8 +223,7 @@ class ExperimentPlanner(object):
         max_spacing_axis = np.argmax(target_spacing)
         remaining_axes = [i for i in range(3) if i != max_spacing_axis]
         transpose_forward = [max_spacing_axis] + remaining_axes
-        tr = np.array(transpose_forward)
-        transpose_backward = [np.argwhere(tr == i)[0][0] for i in range(3)]
+        transpose_backward = np.argwhere(transpose_forward == np.vstack(range(3)))[:, 0]
         return transpose_forward, transpose_backward
 
     def get_plans_for_configuration(self,
@@ -244,9 +243,9 @@ class ExperimentPlanner(object):
         # ideal because large initial patch sizes increase computation time because more iterations in the while loop
         # further down may be required.
         if len(spacing) == 3:
-            initial_patch_size = (tmp * (256 ** 3 / np.prod(tmp)) ** (1 / 3)).round().tolist()
+            initial_patch_size = (tmp * (256 ** 3 / np.prod(tmp)) ** (1 / 3)).round()
         elif len(spacing) == 2:
-            initial_patch_size = (tmp * (2048 ** 2 / np.prod(tmp)) ** (1 / 2)).round().tolist()
+            initial_patch_size = (tmp * (2048 ** 2 / np.prod(tmp)) ** (1 / 2)).round()
         else:
             raise RuntimeError()
 

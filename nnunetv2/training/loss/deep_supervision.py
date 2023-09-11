@@ -26,4 +26,4 @@ class DeepSupervisionWrapper(nn.Module):
         else:
             weights = self.weight_factors
 
-        return sum([weights[i] * self.loss(*inputs) for i, inputs in enumerate(zip(*args))])
+        return sum([weights[i] * self.loss(*inputs) for i, inputs in enumerate(zip(*args)) if weights[i] != 0.0])
