@@ -74,7 +74,8 @@ class MemoryEfficientSoftDiceLoss(nn.Module):
             x = self.apply_nonlin(x)
 
         # make everything shape (b, c)
-        axes = list(range(2, len(x.shape)))
+        axes = tuple(range(2, len(x.shape)))
+
         with torch.no_grad():
             if len(x.shape) != len(y.shape):
                 y = y.view((y.shape[0], 1, *y.shape[1:]))
@@ -95,15 +96,18 @@ class MemoryEfficientSoftDiceLoss(nn.Module):
         if not self.do_bg:
             x = x[:, 1:]
 
-        intersect = (x * y_onehot).sum(axes) if loss_mask is None else (x * y_onehot * loss_mask).sum(axes)
-        sum_pred = x.sum(axes) if loss_mask is None else (x * loss_mask).sum(axes)
-
-        if self.ddp and self.batch_dice:
-            intersect = AllGatherGrad.apply(intersect).sum(0)
-            sum_pred = AllGatherGrad.apply(sum_pred).sum(0)
-            sum_gt = AllGatherGrad.apply(sum_gt).sum(0)
+        if loss_mask is None:
+            intersect = (x * y_onehot).sum(axes)
+            sum_pred = x.sum(axes)
+        else:
+            intersect = (x * y_onehot * loss_mask).sum(axes)
+            sum_pred = (x * loss_mask).sum(axes)
 
         if self.batch_dice:
+            if self.ddp:
+                intersect = AllGatherGrad.apply(intersect).sum(0)
+                sum_pred = AllGatherGrad.apply(sum_pred).sum(0)
+                sum_gt = AllGatherGrad.apply(sum_gt).sum(0)
             intersect = intersect.sum(0)
             sum_pred = sum_pred.sum(0)
             sum_gt = sum_gt.sum(0)

@@ -265,6 +265,12 @@ class nnUNetPredictor(object):
         label_manager = plans_manager.get_label_manager(dataset_json)
 
         for i in range(len(input_list_of_lists)):
+            ofile = output_filename_truncated[i] if output_filename_truncated is not None else None
+            if ofile is not None:
+                print(f'\nPredicting {os.path.basename(ofile)}:')
+            else:
+                print(f'\nPredicting image of shape {data.shape}:')
+
             data, seg, properties = preprocessor.run_case(
                 input_list_of_lists[i],
                 seg_from_prev_stage_files[i] if seg_from_prev_stage_files is not None else None,
@@ -279,22 +285,16 @@ class nnUNetPredictor(object):
             if self.device.type == 'cuda':
                 data = data.pin_memory()
 
-            ofile = output_filename_truncated[i] if output_filename_truncated is not None else None
-            if ofile is not None:
-                print(f'\nPredicting {os.path.basename(ofile)}:')
-            else:
-                print(f'\nPredicting image of shape {data.shape}:')
-
             prediction = self.predict_logits_from_preprocessed_data(data)
 
             if ofile is not None:
-                print('sending off prediction to background worker for resampling and export')
+                print('resampling and export')
                 export_prediction_from_logits(
                     prediction, properties, self.configuration_manager, self.plans_manager, self.dataset_json, ofile,
                     save_probabilities)
                 print(f'done with {os.path.basename(ofile)}')
             else:
-                print('sending off prediction to background worker for resampling')
+                print('resampling')
                 ret.append(convert_predicted_logits_to_segmentation_with_correct_shape(
                     prediction, self.plans_manager, self.configuration_manager, self.label_manager, properties,
                     save_probabilities))

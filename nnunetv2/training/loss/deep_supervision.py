@@ -12,7 +12,7 @@ class DeepSupervisionWrapper(nn.Module):
         If weights are None, all w will be 1.
         """
         super(DeepSupervisionWrapper, self).__init__()
-        self.weight_factors = weight_factors
+        self.weight_factors = tuple(weight_factors)
         self.loss = loss
 
     def forward(self, *args):
@@ -22,7 +22,7 @@ class DeepSupervisionWrapper(nn.Module):
         # is executed a lot of times!
 
         if self.weight_factors is None:
-            weights = [1] * len(args[0])
+            weights = (1,) * len(args[0])
         else:
             weights = self.weight_factors
 

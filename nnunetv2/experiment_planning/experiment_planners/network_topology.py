@@ -3,7 +3,7 @@ import numpy as np
 
 
 def get_shape_must_be_divisible_by(net_numpool_per_axis):
-    return 2 ** np.array(net_numpool_per_axis)
+    return 2 ** np.asarray(net_numpool_per_axis)
 
 
 def pad_shape(shape, must_be_divisible_by):
@@ -14,16 +14,16 @@ def pad_shape(shape, must_be_divisible_by):
     :return:
     """
     if not isinstance(must_be_divisible_by, (tuple, list, np.ndarray)):
-        must_be_divisible_by = [must_be_divisible_by] * len(shape)
+        must_be_divisible_by = (must_be_divisible_by, ) * len(shape)
     else:
         assert len(must_be_divisible_by) == len(shape)
 
-    new_shp = [shape[i] + must_be_divisible_by[i] - shape[i] % must_be_divisible_by[i] for i in range(len(shape))]
+    new_shp = np.array(shape, dtype=int)
+    for i in range(len(new_shp)):
+        modulo = new_shp[i] % must_be_divisible_by[i]
+        if modulo:
+            new_shp[i] += must_be_divisible_by[i] - modulo
 
-    for i in range(len(shape)):
-        if shape[i] % must_be_divisible_by[i] == 0:
-            new_shp[i] -= must_be_divisible_by[i]
-    new_shp = np.array(new_shp).astype(int)
     return new_shp
 
 

@@ -1,12 +1,10 @@
 import gc
-import os
-from copy import deepcopy
 from typing import Union, List
 
 import numpy as np
 import torch
 from acvl_utils.cropping_and_padding.bounding_boxes import bounding_box_to_slice
-from batchgenerators.utilities.file_and_folder_operations import load_json, isfile, save_pickle
+from batchgenerators.utilities.file_and_folder_operations import load_json, save_pickle
 
 from nnunetv2.configuration import default_num_processes
 from nnunetv2.utilities.label_handling.label_handling import LabelManager

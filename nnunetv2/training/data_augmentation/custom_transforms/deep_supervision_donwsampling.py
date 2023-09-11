@@ -25,31 +25,33 @@ class DownsampleSegForDSTransform2(AbstractTransform):
         self.ds_scales = ds_scales
 
     def __call__(self, **data_dict):
+        data = data_dict[self.input_key]
+        shape = data.shape
         if self.axes is None:
-            axes = list(range(2, data_dict[self.input_key].ndim))
+            axes = tuple(range(2, data.ndim))
         else:
             axes = self.axes
 
         output = []
         for s in self.ds_scales:
             if not isinstance(s, (tuple, list)):
-                s = [s] * len(axes)
+                s = (s,) * len(axes)
             else:
                 assert len(s) == len(axes), f'If ds_scales is a tuple for each resolution (one downsampling factor ' \
                                             f'for each axis) then the number of entried in that tuple (here ' \
                                             f'{len(s)}) must be the same as the number of axes (here {len(axes)}).'
 
             if all([i == 1 for i in s]):
-                output.append(data_dict[self.input_key])
+                output.append(data)
             else:
-                new_shape = np.array(data_dict[self.input_key].shape).astype(float)
+                new_shape = np.array(shape).astype(float)
                 for i, a in enumerate(axes):
                     new_shape[a] *= s[i]
                 new_shape = np.round(new_shape).astype(int)
-                out_seg = np.zeros(new_shape, dtype=data_dict[self.input_key].dtype)
-                for b in range(data_dict[self.input_key].shape[0]):
-                    for c in range(data_dict[self.input_key].shape[1]):
-                        out_seg[b, c] = resize_segmentation(data_dict[self.input_key][b, c], new_shape[2:], self.order)
+                out_seg = np.zeros(new_shape, dtype=data.dtype)
+                for b in range(shape[0]):
+                    for c in range(shape[1]):
+                        out_seg[b, c] = resize_segmentation(data[b, c], new_shape[2:], self.order)
                 output.append(out_seg)
         data_dict[self.output_key] = output
         return data_dict

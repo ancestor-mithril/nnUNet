@@ -39,6 +39,7 @@ class nnUNetDataLoaderBase(DataLoader):
         self.sampling_probabilities = sampling_probabilities
         self.annotated_classes_key = tuple(label_manager.all_labels)
         self.has_ignore = label_manager.has_ignore_label
+        self.oversample_last_XX_percent_percentage = round(self.batch_size * (1 - self.oversample_foreground_percent))
         self.get_do_oversample = self._oversample_last_XX_percent if not probabilistic_oversampling \
             else self._probabilistic_oversampling
 
@@ -46,7 +47,7 @@ class nnUNetDataLoaderBase(DataLoader):
         """
         determines whether sample sample_idx in a minibatch needs to be guaranteed foreground
         """
-        return not sample_idx < round(self.batch_size * (1 - self.oversample_foreground_percent))
+        return not sample_idx < self.oversample_last_XX_percent_percentage
 
     def _probabilistic_oversampling(self, sample_idx: int) -> bool:
         # print('YEAH BOIIIIII')
