@@ -161,9 +161,9 @@ def resample_data_or_seg(data: np.ndarray, new_shape: Union[Tuple[float, ...], L
 
             reshaped_final_data = []
             for c in range(data.shape[0]):
+                gc.collect()
                 reshaped_data = []
                 for slice_id in range(shape[axis]):
-                    gc.collect()
                     if axis == 0:
                         reshaped_data.append(resize_fn(data[c, slice_id], new_shape_2d, order, **kwargs))
                     elif axis == 1:
