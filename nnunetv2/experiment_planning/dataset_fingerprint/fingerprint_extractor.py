@@ -58,6 +58,7 @@ class DatasetFingerprintExtractor(object):
 
         # segmentation is 4d: 1,x,y,z. We need to remove the empty dimension for the following code to work
         foreground_mask = segmentation[0] > 0
+        percentiles = np.array((0.5, 50.0, 99.5))
 
         for i in range(len(images)):
             foreground_pixels = images[i][foreground_mask]
@@ -65,17 +66,27 @@ class DatasetFingerprintExtractor(object):
             # sample with replacement so that we don't get issues with cases that have less than num_samples
             # foreground_pixels. We could also just sample less in those cases but that would than cause these
             # training cases to be underrepresented
-            intensities_per_channel.append(
-                rs.choice(foreground_pixels, num_samples, replace=True) if num_fg > 0 else [])
-            intensity_statistics_per_channel.append({
-                'mean': np.mean(foreground_pixels) if num_fg > 0 else np.nan,
-                'median': np.median(foreground_pixels) if num_fg > 0 else np.nan,
-                'min': np.min(foreground_pixels) if num_fg > 0 else np.nan,
-                'max': np.max(foreground_pixels) if num_fg > 0 else np.nan,
-                'percentile_99_5': np.percentile(foreground_pixels, 99.5) if num_fg > 0 else np.nan,
-                'percentile_00_5': np.percentile(foreground_pixels, 0.5) if num_fg > 0 else np.nan,
-
-            })
+            if num_fg > 0:
+                intensities_per_channel.append(rs.choice(foreground_pixels, num_samples, replace=True))
+                percentile_00_5, median, percentile_99_5 = np.percentile(foreground_pixels, percentiles)
+                intensity_statistics_per_channel.append({
+                    'mean': np.mean(foreground_pixels),
+                    'median': median,
+                    'min': np.min(foreground_pixels),
+                    'max': np.max(foreground_pixels),
+                    'percentile_99_5': percentile_99_5,
+                    'percentile_00_5': percentile_00_5,
+                })
+            else:
+                intensities_per_channel.append([])
+                intensity_statistics_per_channel.append({
+                    'mean': np.nan,
+                    'median': np.nan,
+                    'min': np.nan,
+                    'max': np.nan,
+                    'percentile_99_5': np.nan,
+                    'percentile_00_5': np.nan,
+                })
 
         return intensities_per_channel, intensity_statistics_per_channel
 

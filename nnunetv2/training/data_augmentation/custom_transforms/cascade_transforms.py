@@ -66,7 +66,7 @@ class RemoveRandomConnectedComponentFromOneHotEncodingTransform(AbstractTransfor
                         if not np.any(workon):
                             continue
                         num_voxels = np.prod(workon.shape, dtype=np.uint64)
-                        lab, component_sizes = label_with_component_sizes(workon.astype(bool))
+                        lab, component_sizes = label_with_component_sizes(workon)
                         if len(component_sizes) > 0:
                             valid_component_ids = [i for i, j in component_sizes.items() if j <
                                                    num_voxels*self.dont_do_if_covers_more_than_x_percent]

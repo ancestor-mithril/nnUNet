@@ -24,7 +24,7 @@ def compute_new_shape(old_shape: Union[Tuple[int, ...], List[int], np.ndarray],
                       old_spacing: Union[Tuple[float, ...], List[float], np.ndarray],
                       new_spacing: Union[Tuple[float, ...], List[float], np.ndarray]) -> np.ndarray:
     old_spacing = np.asarray(old_spacing)
-    return (old_spacing / new_spacing * old_shape).round().astype(int)  # exception if sizes are not the same
+    return np.rint((old_spacing / new_spacing * old_shape)).astype(int)  # exception if sizes are not the same
 
 
 def resample_data_or_seg_to_spacing(data: np.ndarray,
@@ -195,7 +195,7 @@ def resample_data_or_seg(data: np.ndarray, new_shape: Union[Tuple[float, ...], L
                         reshaped = np.zeros(new_shape, dtype=dtype_data)
 
                         for cl in unique_labels:
-                            reshaped_multihot = np.round(
+                            reshaped_multihot = np.rint(
                                 map_coordinates((reshaped_data == cl).astype(float), coord_map, order=order_z,
                                                 mode='nearest'))
                             reshaped[reshaped_multihot > 0.5] = cl

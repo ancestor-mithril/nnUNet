@@ -243,9 +243,9 @@ class ExperimentPlanner(object):
         # ideal because large initial patch sizes increase computation time because more iterations in the while loop
         # further down may be required.
         if len(spacing) == 3:
-            initial_patch_size = (tmp * (256 ** 3 / np.prod(tmp)) ** (1 / 3)).round()
+            initial_patch_size = np.rint((tmp * (256 ** 3 / np.prod(tmp)) ** (1 / 3)))
         elif len(spacing) == 2:
-            initial_patch_size = (tmp * (2048 ** 2 / np.prod(tmp)) ** (1 / 2)).round()
+            initial_patch_size = np.rint((tmp * (2048 ** 2 / np.prod(tmp)) ** (1 / 2)))
         else:
             raise RuntimeError()
 
@@ -466,7 +466,7 @@ class ExperimentPlanner(object):
             'dataset_name': self.dataset_name,
             'plans_name': self.plans_identifier,
             'original_median_spacing_after_transp': [float(i) for i in median_spacing],
-            'original_median_shape_after_transp': [int(round(i)) for i in median_shape],
+            'original_median_shape_after_transp': [int(i) for i in np.rint(median_shape)],
             'image_reader_writer': self.determine_reader_writer().__name__,
             'transpose_forward': [int(i) for i in transpose_forward],
             'transpose_backward': [int(i) for i in transpose_backward],

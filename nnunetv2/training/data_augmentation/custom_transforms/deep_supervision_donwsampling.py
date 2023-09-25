@@ -44,10 +44,10 @@ class DownsampleSegForDSTransform2(AbstractTransform):
             if all([i == 1 for i in s]):
                 output.append(data)
             else:
-                new_shape = np.array(shape).astype(float)
+                new_shape = np.array(shape, dtype=float)
                 for i, a in enumerate(axes):
                     new_shape[a] *= s[i]
-                new_shape = np.round(new_shape).astype(int)
+                new_shape = np.rint(new_shape).astype(int)
                 out_seg = np.zeros(new_shape, dtype=data.dtype)
                 for b in range(shape[0]):
                     for c in range(shape[1]):
