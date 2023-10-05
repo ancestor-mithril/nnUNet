@@ -56,7 +56,7 @@ class RemoveRandomConnectedComponentFromOneHotEncodingTransform(AbstractTransfor
         self.channel_idx = channel_idx
 
     def __call__(self, **data_dict):
-        data = data_dict.get(self.key)
+        data = data_dict[self.key]
         for b in range(data.shape[0]):
             if np.random.uniform() < self.p_per_sample:
                 for c in self.channel_idx:

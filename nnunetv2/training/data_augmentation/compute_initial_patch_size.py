@@ -1,4 +1,5 @@
 import numpy as np
+from batchgenerators.augmentations.utils import rotate_coords_3d, rotate_coords_2d
 
 
 def get_patch_size(final_patch_size, rot_x, rot_y, rot_z, scale_range):
@@ -8,11 +9,11 @@ def get_patch_size(final_patch_size, rot_x, rot_y, rot_z, scale_range):
         rot_y = max(np.abs(rot_y))
     if isinstance(rot_z, (tuple, list)):
         rot_z = max(np.abs(rot_z))
-    rot_x = min(90 / 360 * 2. * np.pi, rot_x)
-    rot_y = min(90 / 360 * 2. * np.pi, rot_y)
-    rot_z = min(90 / 360 * 2. * np.pi, rot_z)
-    from batchgenerators.augmentations.utils import rotate_coords_3d, rotate_coords_2d
-    coords = np.array(final_patch_size)
+    min_rot = 90 / 360 * 2. * np.pi
+    rot_x = min(min_rot, rot_x)
+    rot_y = min(min_rot, rot_y)
+    rot_z = min(min_rot, rot_z)
+    coords = np.asarray(final_patch_size)
     final_shape = np.copy(coords)
     if len(coords) == 3:
         final_shape = np.max(np.vstack((np.abs(rotate_coords_3d(coords, rot_x, 0, 0)), final_shape)), 0)
