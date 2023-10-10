@@ -49,9 +49,7 @@ def compute_steps_for_sliding_window(image_size: Tuple[int, ...], tile_size: Tup
         else:
             actual_step_size = 99999999999  # does not matter because there is only one step at 0
 
-        steps_here = [int(np.round(actual_step_size * i)) for i in range(num_steps[dim])]
-
-        steps.append(steps_here)
+        steps.append(np.rint(np.arange(num_steps[dim]) * actual_step_size).astype(int))
 
     return steps
 

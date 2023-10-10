@@ -59,7 +59,7 @@ class CTNormalization(ImageNormalization):
         std_intensity = self.intensityproperties['std']
         lower_bound = self.intensityproperties['percentile_00_5']
         upper_bound = self.intensityproperties['percentile_99_5']
-        image = np.clip(image, lower_bound, upper_bound)
+        image = np.clip(image, lower_bound, upper_bound)  # TODO: out
         image = (image - mean_intensity) / max(std_intensity, 1e-8)
         return image
 

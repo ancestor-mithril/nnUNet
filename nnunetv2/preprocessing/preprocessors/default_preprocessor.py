@@ -11,6 +11,7 @@
 #    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 #    See the License for the specific language governing permissions and
 #    limitations under the License.
+import gc
 import multiprocessing
 import shutil
 from time import sleep
@@ -50,7 +51,7 @@ class DefaultPreprocessor(object):
 
         # apply transpose_forward, this also needs to be applied to the spacing!
         data = data.transpose([0, *[i + 1 for i in plans_manager.transpose_forward]])
-        if seg is not None:
+        if has_seg:
             seg = seg.transpose([0, *[i + 1 for i in plans_manager.transpose_forward]])
         original_spacing = [properties['spacing'][i] for i in plans_manager.transpose_forward]
 
@@ -81,7 +82,9 @@ class DefaultPreprocessor(object):
         # print('current shape', data.shape[1:], 'current_spacing', original_spacing,
         #       '\ntarget shape', new_shape, 'target_spacing', target_spacing)
         old_shape = data.shape[1:]
+        gc.collect()
         data = configuration_manager.resampling_fn_data(data, new_shape, original_spacing, target_spacing)
+        gc.collect()
         seg = configuration_manager.resampling_fn_seg(seg, new_shape, original_spacing, target_spacing)
         if self.verbose:
             print(f'old shape: {old_shape}, new_shape: {new_shape}, old_spacing: {original_spacing}, '
@@ -201,15 +204,14 @@ class DefaultPreprocessor(object):
         assert isdir(join(nnUNet_raw, dataset_name)), "The requested dataset could not be found in nnUNet_raw"
 
         plans_file = join(nnUNet_preprocessed, dataset_name, plans_identifier + '.json')
-        assert isfile(plans_file), "Expected plans file (%s) not found. Run corresponding nnUNet_plan_experiment " \
-                                   "first." % plans_file
+        assert isfile(plans_file), f"Expected plans file ({plans_file}) not found. Run corresponding nnUNet_plan_experiment " \
+                                   "first."
         plans = load_json(plans_file)
         plans_manager = PlansManager(plans)
         configuration_manager = plans_manager.get_configuration(configuration_name)
 
         if self.verbose:
             print(f'Preprocessing the following configuration: {configuration_name}')
-        if self.verbose:
             print(configuration_manager)
 
         dataset_json_file = join(nnUNet_preprocessed, dataset_name, 'dataset.json')
@@ -241,19 +243,18 @@ class DefaultPreprocessor(object):
             workers = [j for j in p._pool]
             with tqdm(desc=None, total=len(dataset), disable=self.verbose) as pbar:
                 while len(remaining) > 0:
-                    all_alive = all([j.is_alive() for j in workers])
-                    if not all_alive:
-                        raise RuntimeError('Some background worker is 6 feet under. Yuck. \n'
-                                           'OK jokes aside.\n'
-                                           'One of your background processes is missing. This could be because of '
-                                           'an error (look for an error message) or because it was killed '
-                                           'by your OS due to running out of RAM. If you don\'t see '
-                                           'an error message, out of RAM is likely the problem. In that case '
-                                           'reducing the number of workers might help')
-                    done = [i for i in remaining if r[i].ready()]
-                    for _ in done:
-                        pbar.update()
-                    remaining = [i for i in remaining if i not in done]
+                    for j in workers:
+                        if not j.is_alive():
+                            raise RuntimeError('Some background worker is 6 feet under. Yuck. \n'
+                                               'OK jokes aside.\n'
+                                               'One of your background processes is missing. This could be because of '
+                                               'an error (look for an error message) or because it was killed '
+                                               'by your OS due to running out of RAM. If you don\'t see '
+                                               'an error message, out of RAM is likely the problem. In that case '
+                                               'reducing the number of workers might help')
+                    n = len(remaining)
+                    remaining = [i for i in remaining if not r[i].ready()]
+                    pbar.update(n - len(remaining))
                     sleep(0.1)
 
     def modify_seg_fn(self, seg: np.ndarray, plans_manager: PlansManager, dataset_json: dict,

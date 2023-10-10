@@ -29,7 +29,7 @@ from nnunetv2.utilities.file_path_utilities import get_output_folder, check_work
 from nnunetv2.utilities.find_class_by_name import recursive_find_python_class
 from nnunetv2.utilities.helpers import empty_cache, dummy_context
 from nnunetv2.utilities.json_export import recursive_fix_for_json_export
-from nnunetv2.utilities.label_handling.label_handling import determine_num_input_channels
+from nnunetv2.utilities.label_handling.label_handling import determine_num_input_channels, convert_labelmap_to_one_hot
 from nnunetv2.utilities.plans_handling.plans_handler import PlansManager, ConfigurationManager
 from nnunetv2.utilities.utils import create_lists_from_splitted_dataset_folder
 
@@ -241,12 +241,69 @@ class nnUNetPredictor(object):
         if len(list_of_lists_or_source_folder) == 0:
             return
 
+        if num_processes_preprocessing == 0 and num_processes_segmentation_export == 0:
+
+            return self._sequential_prediction(list_of_lists_or_source_folder, seg_from_prev_stage_files,
+                                               output_filename_truncated, save_probabilities)
+
         data_iterator = self._internal_get_data_iterator_from_lists_of_filenames(list_of_lists_or_source_folder,
                                                                                  seg_from_prev_stage_files,
                                                                                  output_filename_truncated,
                                                                                  num_processes_preprocessing)
 
         return self.predict_from_data_iterator(data_iterator, save_probabilities, num_processes_segmentation_export)
+
+    def _sequential_prediction(self, input_list_of_lists, seg_from_prev_stage_files,
+                               output_filename_truncated, save_probabilities):
+        ret = []
+        configuration_manager = self.configuration_manager
+        preprocessor = configuration_manager.preprocessor_class(verbose=self.verbose_preprocessing)
+        plans_manager = self.plans_manager
+        dataset_json = self.dataset_json
+        if isinstance(dataset_json, str):
+            dataset_json = load_json(dataset_json)
+        label_manager = plans_manager.get_label_manager(dataset_json)
+
+        for i in range(len(input_list_of_lists)):
+            ofile = output_filename_truncated[i] if output_filename_truncated is not None else None
+            if ofile is not None:
+                print(f'\nPredicting {os.path.basename(ofile)}:')
+            else:
+                print(f'\nPredicting image of shape {data.shape}:')
+
+            data, seg, properties = preprocessor.run_case(
+                input_list_of_lists[i],
+                seg_from_prev_stage_files[i] if seg_from_prev_stage_files is not None else None,
+                plans_manager,
+                configuration_manager,
+                dataset_json)
+            if seg_from_prev_stage_files is not None and seg_from_prev_stage_files[i] is not None:
+                seg_onehot = convert_labelmap_to_one_hot(seg[0], label_manager.foreground_labels, data.dtype)
+                data = np.vstack((data, seg_onehot))
+
+            data = torch.from_numpy(data).contiguous().float()
+            if self.device.type == 'cuda':
+                data = data.pin_memory()
+
+            prediction = self.predict_logits_from_preprocessed_data(data)
+
+            if ofile is not None:
+                print('resampling and export')
+                export_prediction_from_logits(
+                    prediction, properties, self.configuration_manager, self.plans_manager, self.dataset_json, ofile,
+                    save_probabilities)
+                print(f'done with {os.path.basename(ofile)}')
+            else:
+                print('resampling')
+                ret.append(convert_predicted_logits_to_segmentation_with_correct_shape(
+                    prediction, self.plans_manager, self.configuration_manager, self.label_manager, properties,
+                    save_probabilities))
+                print(f'\nDone with image of shape {data.shape}:')
+
+        compute_gaussian.cache_clear()
+        empty_cache(self.device)
+        return ret
+
 
     def _internal_get_data_iterator_from_lists_of_filenames(self,
                                                             input_list_of_lists: List[List[str]],
@@ -364,7 +421,7 @@ class nnUNetPredictor(object):
                     sleep(0.1)
                     proceed = not check_workers_alive_and_busy(export_pool, worker_list, r, allowed_num_queued=2)
 
-                prediction = self.predict_logits_from_preprocessed_data(data).cpu()
+                prediction = self.predict_logits_from_preprocessed_data(data)
 
                 if ofile is not None:
                     # this needs to go into background processes
@@ -425,7 +482,7 @@ class nnUNetPredictor(object):
 
         if self.verbose:
             print('predicting')
-        predicted_logits = self.predict_logits_from_preprocessed_data(dct['data']).cpu()
+        predicted_logits = self.predict_logits_from_preprocessed_data(dct['data'])
 
         if self.verbose:
             print('resampling to original shape')
@@ -584,9 +641,10 @@ class nnUNetPredictor(object):
             with torch.autocast(self.device.type, enabled=True) if self.device.type == 'cuda' else dummy_context():
                 assert input_image.ndim == 4, 'input_image must be a 4D np.ndarray or torch.Tensor (c, x, y, z)'
 
-                if self.verbose: print(f'Input shape: {input_image.shape}')
-                if self.verbose: print("step_size:", self.tile_step_size)
-                if self.verbose: print("mirror_axes:", self.allowed_mirroring_axes if self.use_mirroring else None)
+                if self.verbose:
+                    print(f'Input shape: {input_image.shape}')
+                    print("step_size:", self.tile_step_size)
+                    print("mirror_axes:", self.allowed_mirroring_axes if self.use_mirroring else None)
 
                 # if input_image is smaller than tile_size we need to pad it to tile_size.
                 data, slicer_revert_padding = pad_nd_image(input_image, self.configuration_manager.patch_size,
@@ -599,7 +657,7 @@ class nnUNetPredictor(object):
                 results_device = self.device if self.perform_everything_on_gpu else torch.device('cpu')
                 if self.verbose: print('preallocating arrays')
                 try:
-                    data = data.to(self.device)
+                    data = data.to(self.device, non_blocking=True)
                     predicted_logits = torch.zeros((self.label_manager.num_segmentation_heads, *data.shape[1:]),
                                                    dtype=torch.half,
                                                    device=results_device)

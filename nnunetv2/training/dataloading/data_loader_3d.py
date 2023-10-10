@@ -21,16 +21,15 @@ class nnUNetDataLoader3D(nnUNetDataLoaderBase):
 
             # If we are doing the cascade then the segmentation from the previous stage will already have been loaded by
             # self._data.load_case(i) (see nnUNetDataset.load_case)
-            shape = data.shape[1:]
-            dim = len(shape)
+            shape = np.array(data.shape[1:])
             bbox_lbs, bbox_ubs = self.get_bbox(shape, force_fg, properties['class_locations'])
 
             # whoever wrote this knew what he was doing (hint: it was me). We first crop the data to the region of the
             # bbox that actually lies within the data. This will result in a smaller array which is then faster to pad.
             # valid_bbox is just the coord that lied within the data cube. It will be padded to match the patch size
             # later
-            valid_bbox_lbs = [max(0, bbox_lbs[i]) for i in range(dim)]
-            valid_bbox_ubs = [min(shape[i], bbox_ubs[i]) for i in range(dim)]
+            valid_bbox_lbs = np.clip(bbox_lbs, a_min=0, a_max=None)
+            valid_bbox_ubs = np.minimum(shape, bbox_ubs)
 
             # At this point you might ask yourself why we would treat seg differently from seg_from_previous_stage.
             # Why not just concatenate them here and forget about the if statements? Well that's because segneeds to
@@ -39,12 +38,13 @@ class nnUNetDataLoader3D(nnUNetDataLoaderBase):
             this_slice = tuple([slice(0, data.shape[0])] + [slice(i, j) for i, j in zip(valid_bbox_lbs, valid_bbox_ubs)])
             data = data[this_slice]
 
-            this_slice = tuple([slice(0, seg.shape[0])] + [slice(i, j) for i, j in zip(valid_bbox_lbs, valid_bbox_ubs)])
+            this_slice = (slice(0, seg.shape[0]),) + this_slice[1:]
             seg = seg[this_slice]
 
-            padding = [(-min(0, bbox_lbs[i]), max(bbox_ubs[i] - shape[i], 0)) for i in range(dim)]
-            data_all[j] = np.pad(data, ((0, 0), *padding), 'constant', constant_values=0)
-            seg_all[j] = np.pad(seg, ((0, 0), *padding), 'constant', constant_values=-1)
+            padding = ((0, 0),) + tuple(zip(-np.clip(bbox_lbs, a_min=None, a_max=0),
+                                             np.clip(bbox_ubs - shape, a_min=0, a_max=None)))
+            data_all[j] = np.pad(data, padding, 'constant', constant_values=0)
+            seg_all[j] = np.pad(seg, padding, 'constant', constant_values=-1)
 
         return {'data': data_all, 'seg': seg_all, 'properties': case_properties, 'keys': selected_keys}
 

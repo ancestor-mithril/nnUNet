@@ -87,7 +87,7 @@ class ExperimentPlanner(object):
     @lru_cache(maxsize=None)
     def static_estimate_VRAM_usage(patch_size: Tuple[int],
                                    n_stages: int,
-                                   strides: Union[int, List[int], Tuple[int, ...]],
+                                   strides: Union[int, Tuple[int, ...]],
                                    UNet_class: Union[Type[PlainConvUNet], Type[ResidualEncoderUNet]],
                                    num_input_channels: int,
                                    features_per_stage: Tuple[int],
@@ -166,10 +166,10 @@ class ExperimentPlanner(object):
         if self.overwrite_target_spacing is not None:
             return np.array(self.overwrite_target_spacing)
 
-        spacings = self.dataset_fingerprint['spacings']
+        spacings = np.vstack(self.dataset_fingerprint['spacings'])
         sizes = self.dataset_fingerprint['shapes_after_crop']
 
-        target = np.percentile(np.vstack(spacings), 50, 0)
+        target = np.percentile(spacings, 50, 0)
 
         # todo sizes_after_resampling = [compute_new_shape(j, i, target) for i, j in zip(spacings, sizes)]
 
@@ -188,7 +188,7 @@ class ExperimentPlanner(object):
         has_aniso_voxels = target_size[worst_spacing_axis] * self.anisotropy_threshold < min(other_sizes)
 
         if has_aniso_spacing and has_aniso_voxels:
-            spacings_of_that_axis = np.vstack(spacings)[:, worst_spacing_axis]
+            spacings_of_that_axis = spacings[:, worst_spacing_axis]
             target_spacing_of_that_axis = np.percentile(spacings_of_that_axis, 10)
             # don't let the spacing of that axis get higher than the other axes
             if target_spacing_of_that_axis < max(other_spacings):
@@ -221,9 +221,9 @@ class ExperimentPlanner(object):
         target_spacing = self.determine_fullres_target_spacing()
 
         max_spacing_axis = np.argmax(target_spacing)
-        remaining_axes = [i for i in list(range(3)) if i != max_spacing_axis]
+        remaining_axes = [i for i in range(3) if i != max_spacing_axis]
         transpose_forward = [max_spacing_axis] + remaining_axes
-        transpose_backward = [np.argwhere(np.array(transpose_forward) == i)[0][0] for i in range(3)]
+        transpose_backward = np.argwhere(transpose_forward == np.vstack(range(3)))[:, 0]
         return transpose_forward, transpose_backward
 
     def get_plans_for_configuration(self,
@@ -243,16 +243,16 @@ class ExperimentPlanner(object):
         # ideal because large initial patch sizes increase computation time because more iterations in the while loop
         # further down may be required.
         if len(spacing) == 3:
-            initial_patch_size = [round(i) for i in tmp * (256 ** 3 / np.prod(tmp)) ** (1 / 3)]
+            initial_patch_size = np.rint((tmp * (256 ** 3 / np.prod(tmp)) ** (1 / 3)))
         elif len(spacing) == 2:
-            initial_patch_size = [round(i) for i in tmp * (2048 ** 2 / np.prod(tmp)) ** (1 / 2)]
+            initial_patch_size = np.rint((tmp * (2048 ** 2 / np.prod(tmp)) ** (1 / 2)))
         else:
             raise RuntimeError()
 
         # clip initial patch size to median_shape. It makes little sense to have it be larger than that. Note that
         # this is different from how nnU-Net v1 does it!
         # todo patch size can still get too large because we pad the patch size to a multiple of 2**n
-        initial_patch_size = np.array([min(i, j) for i, j in zip(initial_patch_size, median_shape[:len(spacing)])])
+        initial_patch_size = np.minimum(initial_patch_size, median_shape[:len(spacing)])
 
         # use that to get the network topology. Note that this changes the patch_size depending on the number of
         # pooling operations (must be divisible by 2**num_pool in each axis)
@@ -466,7 +466,7 @@ class ExperimentPlanner(object):
             'dataset_name': self.dataset_name,
             'plans_name': self.plans_identifier,
             'original_median_spacing_after_transp': [float(i) for i in median_spacing],
-            'original_median_shape_after_transp': [int(round(i)) for i in median_shape],
+            'original_median_shape_after_transp': [int(i) for i in np.rint(median_shape)],
             'image_reader_writer': self.determine_reader_writer().__name__,
             'transpose_forward': [int(i) for i in transpose_forward],
             'transpose_backward': [int(i) for i in transpose_backward],
