@@ -12,13 +12,14 @@ class DeepSupervisionWrapper(nn.Module):
         If weights are None, all w will be 1.
         """
         super(DeepSupervisionWrapper, self).__init__()
+        assert any([x != 0 for x in weight_factors]), "At least one weight should be != 0.0"
         self.weight_factors = tuple(weight_factors)
         self.loss = loss
 
     def forward(self, *args):
         assert all([isinstance(i, (tuple, list)) for i in args]), \
-            f"all args must be wither tuple or list, got {[type(i) for i in args]}"
-        # we could check for equal lengths here as well but we really shouldn't overdo it with checks because this code
+            f"all args must be either tuple or list, got {[type(i) for i in args]}"
+        # we could check for equal lengths here as well, but we really shouldn't overdo it with checks because this code
         # is executed a lot of times!
 
         if self.weight_factors is None:
