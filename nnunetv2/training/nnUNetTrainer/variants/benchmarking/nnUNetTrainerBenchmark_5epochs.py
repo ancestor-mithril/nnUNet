@@ -7,8 +7,8 @@ from torch import distributed as dist
 
 class nnUNetTrainerBenchmark_5epochs(nnUNetTrainer):
     def __init__(self, plans: dict, configuration: str, fold: int, dataset_json: dict, unpack_dataset: bool = True,
-                 device: torch.device = torch.device('cuda')):
-        super().__init__(plans, configuration, fold, dataset_json, unpack_dataset, device)
+                 train_steps: int = 250, val_steps: int = 50, device: torch.device = torch.device('cuda')):
+        super().__init__(plans, configuration, fold, dataset_json, unpack_dataset, train_steps, val_steps, device)
         assert self.fold == 0, "It makes absolutely no sense to specify a certain fold. Stick with 0 so that we can parse the results."
         self.disable_checkpointing = True
         self.num_epochs = 5
