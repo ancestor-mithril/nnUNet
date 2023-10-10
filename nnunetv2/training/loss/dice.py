@@ -85,7 +85,7 @@ class MemoryEfficientSoftDiceLoss(nn.Module):
                 y_onehot = y
             else:
                 y_onehot = torch.zeros(x.shape, device=x.device, dtype=torch.bool)
-                y_onehot.scatter_(1,  y.long(), 1)
+                y_onehot.scatter_(1, y.long(), 1)
 
             if not self.do_bg:
                 y_onehot = y_onehot[:, 1:]
@@ -108,6 +108,7 @@ class MemoryEfficientSoftDiceLoss(nn.Module):
                 intersect = AllGatherGrad.apply(intersect).sum(0)
                 sum_pred = AllGatherGrad.apply(sum_pred).sum(0)
                 sum_gt = AllGatherGrad.apply(sum_gt).sum(0)
+
             intersect = intersect.sum(0)
             sum_pred = sum_pred.sum(0)
             sum_gt = sum_gt.sum(0)
@@ -131,7 +132,7 @@ def get_tp_fp_fn_tn(net_output, gt, axes=None, mask=None, square=False):
     :return:
     """
     if axes is None:
-        axes = tuple(range(2, net_output.dim))
+        axes = tuple(range(2, net_output.ndim))
 
     shp_x = net_output.shape
     shp_y = gt.shape
@@ -154,7 +155,7 @@ def get_tp_fp_fn_tn(net_output, gt, axes=None, mask=None, square=False):
 
     if mask is not None:
         with torch.no_grad():
-            mask_here = torch.tile(mask, (1, tp.shape[1], *[1 for _ in range(2, tp.dim)]))
+            mask_here = torch.tile(mask, (1, tp.shape[1], *[1 for _ in range(2, tp.ndim)]))
         tp *= mask_here
         fp *= mask_here
         fn *= mask_here
