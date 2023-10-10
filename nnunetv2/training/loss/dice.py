@@ -74,10 +74,10 @@ class MemoryEfficientSoftDiceLoss(nn.Module):
             x = self.apply_nonlin(x)
 
         # make everything shape (b, c)
-        axes = tuple(range(2, len(x.shape)))
+        axes = tuple(range(2, x.ndim))
 
         with torch.no_grad():
-            if len(x.shape) != len(y.shape):
+            if x.ndim != y.ndim:
                 y = y.view((y.shape[0], 1, *y.shape[1:]))
 
             if x.shape == y.shape:
