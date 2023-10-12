@@ -13,7 +13,12 @@ from batchgenerators.dataloading.multi_threaded_augmenter import MultiThreadedAu
 from batchgenerators.utilities.file_and_folder_operations import load_json, join, isfile, maybe_mkdir_p, isdir, subdirs, \
     save_json
 from torch import nn
-from torch._dynamo import OptimizedModule
+
+if torch.__version__.startswith('1'):
+    class OptimizedModule:
+        pass
+else:
+    from torch._dynamo import OptimizedModule
 from torch.nn.parallel import DistributedDataParallel
 from tqdm import tqdm
 
@@ -49,7 +54,7 @@ class nnUNetPredictor(object):
         self.allow_tqdm = allow_tqdm
 
         self.plans_manager, self.configuration_manager, self.list_of_parameters, self.network, self.dataset_json, \
-        self.trainer_name, self.allowed_mirroring_axes, self.label_manager = None, None, None, None, None, None, None, None
+            self.trainer_name, self.allowed_mirroring_axes, self.label_manager = None, None, None, None, None, None, None, None
 
         self.tile_step_size = tile_step_size
         self.use_gaussian = use_gaussian
@@ -129,7 +134,8 @@ class nnUNetPredictor(object):
         self.allowed_mirroring_axes = inference_allowed_mirroring_axes
         self.label_manager = plans_manager.get_label_manager(dataset_json)
         allow_compile = True
-        allow_compile = allow_compile and ('nnUNet_compile' in os.environ.keys()) and (os.environ['nnUNet_compile'].lower() in ('true', '1', 't'))
+        allow_compile = allow_compile and ('nnUNet_compile' in os.environ.keys()) and (
+                    os.environ['nnUNet_compile'].lower() in ('true', '1', 't'))
         allow_compile = allow_compile and not isinstance(self.network, OptimizedModule)
         if isinstance(self.network, DistributedDataParallel):
             allow_compile = allow_compile and isinstance(self.network.module, OptimizedModule)
@@ -242,7 +248,6 @@ class nnUNetPredictor(object):
             return
 
         if num_processes_preprocessing == 0 and num_processes_segmentation_export == 0:
-
             return self._sequential_prediction(list_of_lists_or_source_folder, seg_from_prev_stage_files,
                                                output_filename_truncated, save_probabilities)
 
@@ -304,7 +309,6 @@ class nnUNetPredictor(object):
         empty_cache(self.device)
         return ret
 
-
     def _internal_get_data_iterator_from_lists_of_filenames(self,
                                                             input_list_of_lists: List[List[str]],
                                                             seg_from_prev_stage_files: Union[List[str], None],
@@ -331,9 +335,9 @@ class nnUNetPredictor(object):
     def get_data_iterator_from_raw_npy_data(self,
                                             image_or_list_of_images: Union[np.ndarray, List[np.ndarray]],
                                             segs_from_prev_stage_or_list_of_segs_from_prev_stage: Union[None,
-                                                                                                        np.ndarray,
-                                                                                                        List[
-                                                                                                            np.ndarray]],
+                                            np.ndarray,
+                                            List[
+                                                np.ndarray]],
                                             properties_or_list_of_properties: Union[dict, List[dict]],
                                             truncated_ofname: Union[str, List[str], None],
                                             num_processes: int = 3):
@@ -370,9 +374,9 @@ class nnUNetPredictor(object):
     def predict_from_list_of_npy_arrays(self,
                                         image_or_list_of_images: Union[np.ndarray, List[np.ndarray]],
                                         segs_from_prev_stage_or_list_of_segs_from_prev_stage: Union[None,
-                                                                                                    np.ndarray,
-                                                                                                    List[
-                                                                                                        np.ndarray]],
+                                        np.ndarray,
+                                        List[
+                                            np.ndarray]],
                                         properties_or_list_of_properties: Union[dict, List[dict]],
                                         truncated_ofname: Union[str, List[str], None],
                                         num_processes: int = 3,
@@ -932,10 +936,10 @@ if __name__ == '__main__':
         verbose=False,
         verbose_preprocessing=False,
         allow_tqdm=True
-        )
+    )
     predictor.initialize_from_trained_model_folder(
         join(nnUNet_results, 'Dataset003_Liver/nnUNetTrainer__nnUNetPlans__3d_lowres'),
-        use_folds=(0, ),
+        use_folds=(0,),
         checkpoint_name='checkpoint_final.pth',
     )
     predictor.predict_from_files(join(nnUNet_raw, 'Dataset003_Liver/imagesTs'),
@@ -946,12 +950,12 @@ if __name__ == '__main__':
 
     # predict a numpy array
     from nnunetv2.imageio.simpleitk_reader_writer import SimpleITKIO
+
     img, props = SimpleITKIO().read_images([join(nnUNet_raw, 'Dataset003_Liver/imagesTr/liver_63_0000.nii.gz')])
     ret = predictor.predict_single_npy_array(img, props, None, None, False)
 
     iterator = predictor.get_data_iterator_from_raw_npy_data([img], None, [props], None, 1)
     ret = predictor.predict_from_data_iterator(iterator, False, 1)
-
 
     # predictor = nnUNetPredictor(
     #     tile_step_size=0.5,
@@ -973,4 +977,3 @@ if __name__ == '__main__':
     #                              num_processes_preprocessing=2, num_processes_segmentation_export=2,
     #                              folder_with_segs_from_prev_stage='/media/isensee/data/nnUNet_raw/Dataset003_Liver/imagesTs_predlowres',
     #                              num_parts=1, part_id=0)
-
