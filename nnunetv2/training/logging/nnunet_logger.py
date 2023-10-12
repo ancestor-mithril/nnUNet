@@ -101,4 +101,6 @@ class nnUNetLogger(object):
         return self.my_fantastic_logging
 
     def load_checkpoint(self, checkpoint: dict):
+        if 'epoch_val_timestamps' not in checkpoint:
+            checkpoint['epoch_val_timestamps'] = checkpoint['epoch_end_timestamps']
         self.my_fantastic_logging = checkpoint
