@@ -918,6 +918,7 @@ class nnUNetTrainer(object):
         self.logger.log('train_losses', loss_here, self.current_epoch)
 
     def on_validation_epoch_start(self):
+        self.logger.log('epoch_val_timestamps', time(), self.current_epoch)
         self.network.eval()
 
     def validation_step(self, batch: dict) -> dict:
@@ -1029,8 +1030,11 @@ class nnUNetTrainer(object):
         self.print_to_log_file('val_loss', np.round(self.logger.my_fantastic_logging['val_losses'][-1], decimals=4))
         self.print_to_log_file('Pseudo dice', [np.round(i, decimals=4) for i in
                                                self.logger.my_fantastic_logging['dice_per_class_or_region'][-1]])
-        self.print_to_log_file(
-            f"Epoch time: {np.round(self.logger.my_fantastic_logging['epoch_end_timestamps'][-1] - self.logger.my_fantastic_logging['epoch_start_timestamps'][-1], decimals=2)} s")
+
+        val_start = self.logger.my_fantastic_logging['epoch_val_timestamps'][-1]
+        train_time = np.round(val_start - self.logger.my_fantastic_logging['epoch_start_timestamps'][-1], decimals=2)
+        val_time = np.round(self.logger.my_fantastic_logging['epoch_end_timestamps'][-1] - val_start, decimals=2)
+        self.print_to_log_file(f"Epoch time: {train_time} + {val_time} = {train_time + val_time} s")
 
         # handling periodic checkpointing
         current_epoch = self.current_epoch
