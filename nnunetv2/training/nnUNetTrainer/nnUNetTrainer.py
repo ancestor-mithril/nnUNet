@@ -1012,8 +1012,8 @@ class nnUNetTrainer(object):
         else:
             loss_here = np.mean(outputs_collated['loss'])
 
-        global_dc_per_class = [i for i in [2 * i / (2 * i + j + k) for i, j, k in
-                                           zip(tp, fp, fn)]]
+        tp *= 2
+        global_dc_per_class = tp / (tp + fp + fn)
         mean_fg_dice = np.nanmean(global_dc_per_class)
         self.logger.log('mean_fg_dice', mean_fg_dice, self.current_epoch)
         self.logger.log('dice_per_class_or_region', global_dc_per_class, self.current_epoch)
@@ -1028,13 +1028,14 @@ class nnUNetTrainer(object):
         # todo find a solution for this stupid shit (print the whole batch at once)
         self.print_to_log_file('train_loss', np.round(self.logger.my_fantastic_logging['train_losses'][-1], decimals=4))
         self.print_to_log_file('val_loss', np.round(self.logger.my_fantastic_logging['val_losses'][-1], decimals=4))
-        self.print_to_log_file('Pseudo dice', [np.round(i, decimals=4) for i in
-                                               self.logger.my_fantastic_logging['dice_per_class_or_region'][-1]])
+        self.print_to_log_file('Pseudo dice', np.round(
+            self.logger.my_fantastic_logging['dice_per_class_or_region'][-1], decimals=4))
 
         val_start = self.logger.my_fantastic_logging['epoch_val_timestamps'][-1]
-        train_time = np.round(val_start - self.logger.my_fantastic_logging['epoch_start_timestamps'][-1], decimals=2)
-        val_time = np.round(self.logger.my_fantastic_logging['epoch_end_timestamps'][-1] - val_start, decimals=2)
-        self.print_to_log_file(f"Epoch time: {train_time} + {val_time} = {train_time + val_time} s")
+        train_time = val_start - self.logger.my_fantastic_logging['epoch_start_timestamps'][-1]
+        val_time = self.logger.my_fantastic_logging['epoch_end_timestamps'][-1] - val_start
+        self.print_to_log_file(f"Epoch time: {np.round(train_time, decimals=2)} + {np.round(val_time, decimals=2)} = "
+                               f"{np.round(train_time + val_time, decimals=2)} s")
 
         # handling periodic checkpointing
         current_epoch = self.current_epoch
