@@ -925,8 +925,11 @@ def predict_entry_point():
 
 
 if __name__ == '__main__':
+    predict_entry_point()
+    exit(0)
     # predict a bunch of files
     from nnunetv2.paths import nnUNet_results, nnUNet_raw
+
     predictor = nnUNetPredictor(
         tile_step_size=0.5,
         use_gaussian=True,
