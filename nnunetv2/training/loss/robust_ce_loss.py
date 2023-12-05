@@ -30,4 +30,3 @@ class TopKLoss(RobustCrossEntropyLoss):
         num_voxels = np.prod(res.shape, dtype=np.int64)
         res, _ = torch.topk(res.view((-1, )), int(num_voxels * self.k / 100), sorted=False)
         return res.mean()
-
