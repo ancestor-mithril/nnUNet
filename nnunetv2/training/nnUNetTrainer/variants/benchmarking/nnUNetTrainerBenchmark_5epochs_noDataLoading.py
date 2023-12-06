@@ -44,7 +44,7 @@ class nnUNetTrainerBenchmark_5epochs_noDataLoading(nnUNetTrainerBenchmark_5epoch
                     train_outputs.append(self.train_step(self.dummy_batch))
                 self.on_train_epoch_end(train_outputs)
 
-                with torch.no_grad():
+                with torch.inference_mode():
                     self.on_validation_epoch_start()
                     val_outputs = []
                     for batch_id in range(self.num_val_iterations_per_epoch):

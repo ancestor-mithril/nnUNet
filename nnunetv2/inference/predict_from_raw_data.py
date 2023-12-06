@@ -519,7 +519,7 @@ class nnUNetPredictor(object):
         # default and not have the entire program crash in case of GPU out of memory. Neat. That should make
         # things a lot faster for some datasets.
         original_perform_everything_on_gpu = self.perform_everything_on_gpu
-        with torch.no_grad():
+        with torch.inference_mode():
             prediction = None
             if self.perform_everything_on_gpu:
                 try:
@@ -632,7 +632,7 @@ class nnUNetPredictor(object):
         # If the device_type is 'mps' then it will complain that mps is not implemented, even if enabled=False
         # is set. Whyyyyyyy. (this is why we don't make use of enabled=False)
         # So autocast will only be active if we have a cuda device.
-        with torch.no_grad():
+        with torch.inference_mode():
             with torch.autocast(self.device.type, enabled=True) if self.device.type == 'cuda' else dummy_context():
                 assert input_image.ndim == 4, 'input_image must be a 4D np.ndarray or torch.Tensor (c, x, y, z)'
 

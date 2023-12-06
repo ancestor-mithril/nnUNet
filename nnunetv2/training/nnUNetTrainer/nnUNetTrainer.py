@@ -1275,7 +1275,7 @@ class nnUNetTrainer(object):
                 train_outputs.append(self.train_step(next(self.dataloader_train)))
             self.on_train_epoch_end(train_outputs)
 
-            with torch.no_grad():
+            with torch.inference_mode():
                 self.on_validation_epoch_start()
                 val_outputs = []
                 for _ in range(self.num_val_iterations_per_epoch):
