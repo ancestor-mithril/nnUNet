@@ -216,7 +216,7 @@ class nnUNetTrainer(object):
             ).to(self.device)
             # compile network for free speedup
             if self._do_i_compile():
-                self.print_to_log_file('Compiling network...')
+                self.print_to_log_file('Using torch.compile...')
                 self.network = torch.compile(self.network)
 
             self.optimizer, self.lr_scheduler = self.configure_optimizers()
@@ -1139,7 +1139,7 @@ class nnUNetTrainer(object):
         self.network.eval()
 
         predictor = nnUNetPredictor(tile_step_size=0.5, use_gaussian=True, use_mirroring=True,
-                                    perform_everything_on_gpu=True, device=self.device, verbose=False,
+                                    perform_everything_on_device=True, device=self.device, verbose=False,
                                     verbose_preprocessing=False, allow_tqdm=False)
         predictor.manual_initialization(self.network, self.plans_manager, self.configuration_manager, None,
                                         self.dataset_json, self.__class__.__name__,
@@ -1191,9 +1191,9 @@ class nnUNetTrainer(object):
                 try:
                     prediction = predictor.predict_sliding_window_return_logits(data)
                 except RuntimeError:
-                    predictor.perform_everything_on_gpu = False
+                    predictor.perform_everything_on_device = False
                     prediction = predictor.predict_sliding_window_return_logits(data)
-                    predictor.perform_everything_on_gpu = True
+                    predictor.perform_everything_on_device = True
 
                 prediction = prediction.cpu()
 
