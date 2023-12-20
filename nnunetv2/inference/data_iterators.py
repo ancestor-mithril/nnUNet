@@ -38,7 +38,7 @@ def preprocess_fromfiles_save_to_queue(list_of_lists: List[List[str]],
                 seg_onehot = convert_labelmap_to_one_hot(seg[0], label_manager.foreground_labels, data.dtype)
                 data = np.vstack((data, seg_onehot))
 
-            data = torch.from_numpy(data).contiguous().float()
+            data = torch.from_numpy(data).to(dtype=torch.float32, memory_format=torch.contiguous_format)
 
             item = {'data': data, 'data_properties': data_properties,
                     'ofile': output_filenames_truncated[idx] if output_filenames_truncated is not None else None}
@@ -236,7 +236,7 @@ def preprocess_fromnpy_save_to_queue(list_of_images: List[np.ndarray],
                 seg_onehot = convert_labelmap_to_one_hot(seg[0], label_manager.foreground_labels, data.dtype)
                 data = np.vstack((data, seg_onehot))
 
-            data = torch.from_numpy(data).contiguous().float()
+            data = torch.from_numpy(data).to(dtype=torch.float32, memory_format=torch.contiguous_format)
 
             item = {'data': data, 'data_properties': list_of_image_properties[idx],
                     'ofile': truncated_ofnames[idx] if truncated_ofnames is not None else None}

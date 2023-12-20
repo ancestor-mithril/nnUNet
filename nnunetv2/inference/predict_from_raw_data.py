@@ -287,7 +287,8 @@ class nnUNetPredictor(object):
                 seg_onehot = convert_labelmap_to_one_hot(seg[0], label_manager.foreground_labels, data.dtype)
                 data = np.vstack((data, seg_onehot))
 
-            data = torch.from_numpy(data).contiguous().float()
+            data = torch.from_numpy(data).to(dtype=torch.float32, memory_format=torch.contiguous_format)
+            # TODO: test torch.channels_last_3d!
             if self.device.type == 'cuda':
                 data = data.pin_memory()
 
