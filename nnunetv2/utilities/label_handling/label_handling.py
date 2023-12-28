@@ -133,7 +133,7 @@ class LabelManager(object):
         if isinstance(logits, np.ndarray):
             logits = torch.from_numpy(logits)
 
-        with torch.no_grad():
+        with torch.inference_mode():
             # softmax etc is not implemented for half
             logits = logits.float()
             probabilities = self.inference_nonlin(logits)

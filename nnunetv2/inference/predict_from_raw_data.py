@@ -516,7 +516,7 @@ class nnUNetPredictor(object):
         """
         n_threads = torch.get_num_threads()
         torch.set_num_threads(default_num_processes if default_num_processes < n_threads else n_threads)
-        with torch.no_grad():
+        with torch.inference_mode():
             prediction = None
 
             for params in self.list_of_parameters:
@@ -652,7 +652,7 @@ class nnUNetPredictor(object):
         # If the device_type is 'mps' then it will complain that mps is not implemented, even if enabled=False
         # is set. Whyyyyyyy. (this is why we don't make use of enabled=False)
         # So autocast will only be active if we have a cuda device.
-        with torch.no_grad():
+        with torch.inference_mode():
             with torch.autocast(self.device.type, enabled=True) if self.device.type == 'cuda' else dummy_context():
                 assert input_image.ndim == 4, 'input_image must be a 4D np.ndarray or torch.Tensor (c, x, y, z)'
 
