@@ -1,13 +1,13 @@
 import argparse
 import multiprocessing
 import shutil
-from multiprocessing import Pool
 from typing import Union, Tuple, List, Callable
 
 import numpy as np
 from acvl_utils.morphology.morphology_helper import remove_all_but_largest_component
 from batchgenerators.utilities.file_and_folder_operations import load_json, subfiles, maybe_mkdir_p, join, isfile, \
     isdir, save_pickle, load_pickle, save_json
+
 from nnunetv2.configuration import default_num_processes
 from nnunetv2.evaluation.accumulate_cv_results import accumulate_cv_results
 from nnunetv2.evaluation.evaluate_predictions import region_or_label_to_mask, compute_metrics_on_folder, \

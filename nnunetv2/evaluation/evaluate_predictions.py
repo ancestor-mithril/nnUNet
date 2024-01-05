@@ -1,12 +1,12 @@
 import multiprocessing
 import os
 from copy import deepcopy
-from multiprocessing import Pool
-from typing import Tuple, List, Union, Optional
+from typing import Tuple, List, Union
 
 import numpy as np
 from batchgenerators.utilities.file_and_folder_operations import subfiles, join, save_json, load_json, \
     isfile
+
 from nnunetv2.configuration import default_num_processes
 from nnunetv2.imageio.base_reader_writer import BaseReaderWriter
 from nnunetv2.imageio.reader_writer_registry import determine_reader_writer_from_dataset_json, \
