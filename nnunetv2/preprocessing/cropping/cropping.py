@@ -2,7 +2,7 @@ import numpy as np
 
 
 # Hello! crop_to_nonzero is the function you are looking for. Ignore the rest.
-from acvl_utils.cropping_and_padding.bounding_boxes import get_bbox_from_mask, crop_to_bbox, bounding_box_to_slice
+from acvl_utils.cropping_and_padding.bounding_boxes import get_bbox_from_mask, bounding_box_to_slice
 from scipy.ndimage import binary_fill_holes
 
 
@@ -15,7 +15,7 @@ def create_nonzero_mask(data):
 
     assert data.ndim in (3, 4), "data must have shape (C, X, Y, Z) or shape (C, X, Y)"
     # np.logical_or.reduce((data[0] != 0, data[1] != 0, ...))
-    return binary_fill_holes(np.logical_or.reduce((*(data != 0),)))
+    return binary_fill_holes(np.logical_or.reduce(data != 0))
 
 
 def crop_to_nonzero(data, seg=None, nonzero_label=-1):
@@ -30,10 +30,10 @@ def crop_to_nonzero(data, seg=None, nonzero_label=-1):
     bbox = get_bbox_from_mask(nonzero_mask)
 
     slicer = bounding_box_to_slice(bbox)
-    data = data[tuple([slice(None), *slicer])]
+    data = data[(slice(None), *slicer)]
 
     if seg is not None:
-        seg = seg[tuple([slice(None), *slicer])]
+        seg = seg[(slice(None), *slicer)]
 
     nonzero_mask = nonzero_mask[slicer][None]
     if seg is not None:
