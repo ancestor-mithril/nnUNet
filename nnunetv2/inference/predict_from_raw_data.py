@@ -259,6 +259,7 @@ class nnUNetPredictor(object):
 
         return self.predict_from_data_iterator(data_iterator, save_probabilities, num_processes_segmentation_export)
 
+    @torch.inference_mode()
     def _sequential_prediction(self, input_list_of_lists, seg_from_prev_stage_files,
                                output_filename_truncated, save_probabilities):
         ret = []
@@ -518,30 +519,30 @@ class nnUNetPredictor(object):
         """
         n_threads = torch.get_num_threads()
         torch.set_num_threads(default_num_processes if default_num_processes < n_threads else n_threads)
-        with torch.inference_mode():
-            prediction = None
+        prediction = None
 
-            for params in self.list_of_parameters:
+        for params in self.list_of_parameters:
 
-                # messing with state dict names...
-                if not isinstance(self.network, OptimizedModule):
-                    self.network.load_state_dict(params)
-                else:
-                    self.network._orig_mod.load_state_dict(params)
+            # messing with state dict names...
+            if not isinstance(self.network, OptimizedModule):
+                self.network.load_state_dict(params)
+            else:
+                self.network._orig_mod.load_state_dict(params)
 
-                # why not leave prediction on device if perform_everything_on_device? Because this may cause the
-                # second iteration to crash due to OOM. Grabbing tha twith try except cause way more bloated code than
-                # this actually saves computation time
-                if prediction is None:
-                    prediction = self.predict_sliding_window_return_logits(data).to('cpu')
-                else:
-                    prediction += self.predict_sliding_window_return_logits(data).to('cpu')
+            # why not leave prediction on device if perform_everything_on_device? Because this may cause the
+            # second iteration to crash due to OOM. Grabbing tha twith try except cause way more bloated code than
+            # this actually saves computation time
+            if prediction is None:
+                prediction = self.predict_sliding_window_return_logits(data).to('cpu')
+            else:
+                prediction += self.predict_sliding_window_return_logits(data).to('cpu')
 
-            if len(self.list_of_parameters) > 1:
-                prediction /= len(self.list_of_parameters)
+        if len(self.list_of_parameters) > 1:
+            prediction /= len(self.list_of_parameters)
 
-            if self.verbose: print('Prediction done')
-            prediction = prediction.to('cpu')
+        if self.verbose:
+            print('Prediction done')
+
         torch.set_num_threads(n_threads)
         return prediction
 
