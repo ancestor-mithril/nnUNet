@@ -1,4 +1,6 @@
-from batchgenerators.utilities.file_and_folder_operations import *
+from os.path import join
+
+from batchgenerators.utilities.file_and_folder_operations import load_json, save_json
 
 from nnunetv2.paths import nnUNet_preprocessed
 from nnunetv2.utilities.dataset_name_id_conversion import maybe_convert_to_dataset_name

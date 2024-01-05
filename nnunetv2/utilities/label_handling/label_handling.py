@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 from functools import cached_property
+from os.path import join
 from time import time
 from typing import Union, List, Tuple, Type
 
 import numpy as np
 import torch
 from acvl_utils.cropping_and_padding.bounding_boxes import bounding_box_to_slice
-from batchgenerators.utilities.file_and_folder_operations import join
 
 import nnunetv2
 from nnunetv2.utilities.find_class_by_name import recursive_find_python_class

@@ -1,7 +1,7 @@
 import argparse
 
 import torch
-from batchgenerators.utilities.file_and_folder_operations import join, load_pickle
+from batchgenerators.utilities.file_and_folder_operations import load_pickle
 
 from nnunetv2.ensembling.ensemble import ensemble_folders
 from nnunetv2.evaluation.find_best_configuration import find_best_configuration, \

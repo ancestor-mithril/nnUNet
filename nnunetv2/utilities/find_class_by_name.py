@@ -1,10 +1,11 @@
 import importlib
 import pkgutil
 
-from batchgenerators.utilities.file_and_folder_operations import *
+from os.path import join
 
 
 def recursive_find_python_class(folder: str, class_name: str, current_module: str):
+    # TODO: Find uses and maybe replace
     tr = None
     for importer, modname, ispkg in pkgutil.iter_modules([folder]):
         # print(modname, ispkg)

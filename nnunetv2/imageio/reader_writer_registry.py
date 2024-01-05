@@ -1,7 +1,7 @@
 import traceback
+from os.path import join
 from typing import Type
 
-from batchgenerators.utilities.file_and_folder_operations import join
 
 import nnunetv2
 from nnunetv2.imageio.natural_image_reader_writer import NaturalImage2DIO

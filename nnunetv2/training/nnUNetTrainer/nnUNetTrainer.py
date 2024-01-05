@@ -6,6 +6,7 @@ import sys
 import warnings
 from copy import deepcopy
 from datetime import datetime
+from os.path import join, isfile
 from time import time, sleep
 from typing import Union, Tuple, List
 
@@ -19,7 +20,7 @@ from batchgenerators.transforms.noise_transforms import GaussianNoiseTransform, 
 from batchgenerators.transforms.resample_transforms import SimulateLowResolutionTransform
 from batchgenerators.transforms.spatial_transforms import SpatialTransform, MirrorTransform
 from batchgenerators.transforms.utility_transforms import RemoveLabelTransform, RenameTransform, NumpyToTensor
-from batchgenerators.utilities.file_and_folder_operations import join, load_json, isfile, save_json, maybe_mkdir_p
+from batchgenerators.utilities.file_and_folder_operations import load_json, save_json, maybe_mkdir_p
 
 if torch.__version__.startswith('1'):
     class OptimizedModule:

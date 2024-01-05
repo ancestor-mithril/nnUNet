@@ -1,12 +1,13 @@
 import argparse
 import multiprocessing
 import shutil
+from os.path import join, isfile, isdir
 from typing import Union, Tuple, List, Callable
 
 import numpy as np
 from acvl_utils.morphology.morphology_helper import remove_all_but_largest_component
-from batchgenerators.utilities.file_and_folder_operations import load_json, subfiles, maybe_mkdir_p, join, isfile, \
-    isdir, save_pickle, load_pickle, save_json
+from batchgenerators.utilities.file_and_folder_operations import load_json, subfiles, maybe_mkdir_p, load_pickle, \
+    save_json, write_pickle
 
 from nnunetv2.configuration import default_num_processes
 from nnunetv2.evaluation.accumulate_cv_results import accumulate_cv_results
@@ -219,7 +220,7 @@ def determine_postprocessing(folder_predictions: str,
                           f'Dice before: {round(baseline_results["mean"][label_or_region]["Dice"], 5)} '
                           f'after: {round(pp_results["mean"][label_or_region]["Dice"], 5)}')
     [shutil.copy(join(source, i), join(output_folder, i)) for i in subfiles(source, join=False)]
-    save_pickle((pp_fns, pp_fn_kwargs), join(folder_predictions, 'postprocessing.pkl'))
+    write_pickle((pp_fns, pp_fn_kwargs), join(folder_predictions, 'postprocessing.pkl'))
 
     baseline_results = load_summary_json(join(folder_predictions, 'summary.json'))
     final_results = load_summary_json(join(output_folder, 'summary.json'))
@@ -346,7 +347,7 @@ if __name__ == '__main__':
 
     fns, kwargs = determine_postprocessing(merged_output_folder, labelstr, plans_manager.plans,
                                            dataset_json, 8, keep_postprocessed_files=True)
-    save_pickle((fns, kwargs), join(trained_model_folder, 'postprocessing.pkl'))
+    write_pickle((fns, kwargs), join(trained_model_folder, 'postprocessing.pkl'))
     fns, kwargs = load_pickle(join(trained_model_folder, 'postprocessing.pkl'))
 
     apply_postprocessing_to_folder(merged_output_folder, merged_output_folder + '_pp', fns, kwargs,

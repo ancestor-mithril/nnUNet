@@ -1,5 +1,6 @@
+from os.path import join
+
 import matplotlib
-from batchgenerators.utilities.file_and_folder_operations import join
 
 matplotlib.use('agg')
 import seaborn as sns

@@ -1,8 +1,8 @@
-from typing import Union, Tuple
+from typing import Tuple, Union, List
 
-from batchgenerators.dataloading.data_loader import DataLoader
 import numpy as np
-from batchgenerators.utilities.file_and_folder_operations import *
+from batchgenerators.dataloading.data_loader import DataLoader
+
 from nnunetv2.training.dataloading.nnunet_dataset import nnUNetDataset
 from nnunetv2.utilities.label_handling.label_handling import LabelManager
 

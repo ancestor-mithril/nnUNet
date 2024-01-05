@@ -1,7 +1,7 @@
-from typing import Tuple
+from os.path import isdir, join, isfile
+from typing import Tuple, List
 
 import numpy as np
-from batchgenerators.utilities.file_and_folder_operations import *
 
 from nnunetv2.evaluation.evaluate_predictions import load_summary_json
 from nnunetv2.paths import nnUNet_results

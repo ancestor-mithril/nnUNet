@@ -4,7 +4,7 @@ from typing import Union, List
 import numpy as np
 import torch
 from acvl_utils.cropping_and_padding.bounding_boxes import bounding_box_to_slice
-from batchgenerators.utilities.file_and_folder_operations import load_json, save_pickle
+from batchgenerators.utilities.file_and_folder_operations import load_json, write_pickle
 
 from nnunetv2.configuration import default_num_processes
 from nnunetv2.utilities.label_handling.label_handling import LabelManager
@@ -98,7 +98,7 @@ def export_prediction_from_logits(predicted_array_or_file: Union[np.ndarray, tor
     if save_probabilities:
         segmentation_final, probabilities_final = ret
         np.savez_compressed(output_file_truncated + '.npz', probabilities=probabilities_final)
-        save_pickle(properties_dict, output_file_truncated + '.pkl')
+        write_pickle(properties_dict, output_file_truncated + '.pkl')
         del probabilities_final, ret
     else:
         segmentation_final = ret

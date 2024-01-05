@@ -1,7 +1,8 @@
 import shutil
 from copy import deepcopy
+from os.path import join, isdir
 
-from batchgenerators.utilities.file_and_folder_operations import join, maybe_mkdir_p, isdir, load_json, save_json
+from batchgenerators.utilities.file_and_folder_operations import maybe_mkdir_p, load_json, save_json
 from nnunetv2.paths import nnUNet_raw
 
 

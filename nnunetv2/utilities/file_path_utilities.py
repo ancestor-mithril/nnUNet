@@ -1,7 +1,9 @@
+import os
 from multiprocessing import Pool
-from typing import Union, Tuple
+from os.path import join
+from typing import Union, Tuple, List
 
-from batchgenerators.utilities.file_and_folder_operations import *
+from batchgenerators.utilities.file_and_folder_operations import split_path
 
 from nnunetv2.paths import nnUNet_results
 from nnunetv2.utilities.dataset_name_id_conversion import maybe_convert_to_dataset_name

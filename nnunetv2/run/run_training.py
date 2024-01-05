@@ -1,12 +1,13 @@
 import os
 import socket
+from os.path import join, isfile
 from typing import Union, Optional
 
 import nnunetv2
 import torch.cuda
 import torch.distributed as dist
 import torch.multiprocessing as mp
-from batchgenerators.utilities.file_and_folder_operations import join, isfile, load_json
+from batchgenerators.utilities.file_and_folder_operations import load_json
 from nnunetv2.paths import nnUNet_preprocessed
 from nnunetv2.run.load_pretrained_weights import load_pretrained_weights
 from nnunetv2.training.nnUNetTrainer.nnUNetTrainer import nnUNetTrainer

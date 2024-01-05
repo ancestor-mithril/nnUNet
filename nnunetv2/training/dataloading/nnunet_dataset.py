@@ -1,10 +1,11 @@
 import os
+from os.path import join, isfile
 from typing import List
 
 import numpy as np
 import shutil
 
-from batchgenerators.utilities.file_and_folder_operations import join, load_pickle, isfile
+from batchgenerators.utilities.file_and_folder_operations import load_pickle
 from nnunetv2.training.dataloading.utils import get_case_identifiers
 
 
