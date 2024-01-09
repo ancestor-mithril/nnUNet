@@ -1,8 +1,8 @@
-from typing import Union, Tuple
+from typing import Tuple, Union, List
 
-from batchgenerators.dataloading.data_loader import DataLoader
 import numpy as np
-from batchgenerators.utilities.file_and_folder_operations import *
+from batchgenerators.dataloading.data_loader import DataLoader
+
 from nnunetv2.training.dataloading.nnunet_dataset import nnUNetDataset
 from nnunetv2.utilities.label_handling.label_handling import LabelManager
 
@@ -39,6 +39,7 @@ class nnUNetDataLoaderBase(DataLoader):
         self.sampling_probabilities = sampling_probabilities
         self.annotated_classes_key = tuple(label_manager.all_labels)
         self.has_ignore = label_manager.has_ignore_label
+        self.oversample_last_XX_percent_percentage = round(self.batch_size * (1 - self.oversample_foreground_percent))
         self.get_do_oversample = self._oversample_last_XX_percent if not probabilistic_oversampling \
             else self._probabilistic_oversampling
 
@@ -46,7 +47,7 @@ class nnUNetDataLoaderBase(DataLoader):
         """
         determines whether sample sample_idx in a minibatch needs to be guaranteed foreground
         """
-        return not sample_idx < round(self.batch_size * (1 - self.oversample_foreground_percent))
+        return not sample_idx < self.oversample_last_XX_percent_percentage
 
     def _probabilistic_oversampling(self, sample_idx: int) -> bool:
         # print('YEAH BOIIIIII')
@@ -76,8 +77,11 @@ class nnUNetDataLoaderBase(DataLoader):
 
         # we can now choose the bbox from -need_to_pad // 2 to shape - patch_size + need_to_pad // 2. Here we
         # define what the upper and lower bound can be to then sample form them with np.random.randint
-        lbs = [- need_to_pad[i] // 2 for i in range(dim)]
-        ubs = [data_shape[i] + need_to_pad[i] // 2 + need_to_pad[i] % 2 - self.patch_size[i] for i in range(dim)]
+        need_to_pad = np.asarray(need_to_pad)
+        div = need_to_pad // 2
+        remainder = need_to_pad % 2
+        lbs = -div
+        ubs = data_shape + div + remainder - self.patch_size
 
         # if not force_fg then we can just sample the bbox randomly from lb and ub. Else we need to make sure we get
         # at least one of the foreground classes in the patch

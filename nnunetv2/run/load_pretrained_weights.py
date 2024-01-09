@@ -1,5 +1,10 @@
 import torch
-from torch._dynamo import OptimizedModule
+
+if torch.__version__.startswith('1'):
+    class OptimizedModule:
+        pass
+else:
+    from torch._dynamo import OptimizedModule
 from torch.nn.parallel import DistributedDataParallel as DDP
 
 
@@ -62,5 +67,3 @@ def load_pretrained_weights(network, fname, verbose=False):
             print(key, 'shape', value.shape)
         print("################### Done ###################")
     mod.load_state_dict(model_dict)
-
-

@@ -12,13 +12,13 @@
 #    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 #    See the License for the specific language governing permissions and
 #    limitations under the License.
-import os.path
-from functools import lru_cache
-from typing import Union
-
-from batchgenerators.utilities.file_and_folder_operations import *
-import numpy as np
+import os
 import re
+from os.path import join
+from typing import List
+
+import numpy as np
+from batchgenerators.utilities.file_and_folder_operations import subfiles, load_json
 
 from nnunetv2.paths import nnUNet_raw
 

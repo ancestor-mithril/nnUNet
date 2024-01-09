@@ -1,7 +1,7 @@
+from os.path import join, isfile
 from typing import Optional
 
 import requests
-from batchgenerators.utilities.file_and_folder_operations import *
 from time import time
 from nnunetv2.model_sharing.model_import import install_model_from_zip_file
 from nnunetv2.paths import nnUNet_results

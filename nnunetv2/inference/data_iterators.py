@@ -38,7 +38,7 @@ def preprocess_fromfiles_save_to_queue(list_of_lists: List[List[str]],
                 seg_onehot = convert_labelmap_to_one_hot(seg[0], label_manager.foreground_labels, data.dtype)
                 data = np.vstack((data, seg_onehot))
 
-            data = torch.from_numpy(data).contiguous().float()
+            data = torch.from_numpy(data).to(dtype=torch.float32, memory_format=torch.contiguous_format)
 
             item = {'data': data, 'data_properties': data_properties,
                     'ofile': output_filenames_truncated[idx] if output_filenames_truncated is not None else None}
@@ -135,7 +135,7 @@ class PreprocessAdapter(DataLoader):
         if output_filenames_truncated is None:
             output_filenames_truncated = [None] * len(list_of_lists)
 
-        super().__init__(list(zip(list_of_lists, list_of_segs_from_prev_stage_files, output_filenames_truncated)),
+        super().__init__(tuple(zip(list_of_lists, list_of_segs_from_prev_stage_files, output_filenames_truncated)),
                          1, num_threads_in_multithreaded,
                          seed_for_shuffle=1, return_incomplete=True,
                          shuffle=False, infinite=False, sampling_probabilities=None)
@@ -181,7 +181,7 @@ class PreprocessAdapterFromNpy(DataLoader):
             truncated_ofnames = [None] * len(list_of_images)
 
         super().__init__(
-            list(zip(list_of_images, list_of_segs_from_prev_stage, list_of_image_properties, truncated_ofnames)),
+            tuple(zip(list_of_images, list_of_segs_from_prev_stage, list_of_image_properties, truncated_ofnames)),
             1, num_threads_in_multithreaded,
             seed_for_shuffle=1, return_incomplete=True,
             shuffle=False, infinite=False, sampling_probabilities=None)
@@ -236,7 +236,7 @@ def preprocess_fromnpy_save_to_queue(list_of_images: List[np.ndarray],
                 seg_onehot = convert_labelmap_to_one_hot(seg[0], label_manager.foreground_labels, data.dtype)
                 data = np.vstack((data, seg_onehot))
 
-            data = torch.from_numpy(data).contiguous().float()
+            data = torch.from_numpy(data).to(dtype=torch.float32, memory_format=torch.contiguous_format)
 
             item = {'data': data, 'data_properties': list_of_image_properties[idx],
                     'ofile': truncated_ofnames[idx] if truncated_ofnames is not None else None}

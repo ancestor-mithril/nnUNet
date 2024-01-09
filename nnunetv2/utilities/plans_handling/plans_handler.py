@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import dynamic_network_architectures
 from copy import deepcopy
-from functools import lru_cache, partial
+from functools import lru_cache, partial, cached_property
 from typing import Union, Tuple, List, Type, Callable
 
 import numpy as np
@@ -36,52 +36,50 @@ class ConfigurationManager(object):
     def __repr__(self):
         return self.configuration.__repr__()
 
-    @property
+    @cached_property
     def data_identifier(self) -> str:
         return self.configuration['data_identifier']
 
-    @property
+    @cached_property
     def preprocessor_name(self) -> str:
         return self.configuration['preprocessor_name']
 
-    @property
-    @lru_cache(maxsize=1)
+    @cached_property
     def preprocessor_class(self) -> Type[DefaultPreprocessor]:
         preprocessor_class = recursive_find_python_class(join(nnunetv2.__path__[0], "preprocessing"),
                                                          self.preprocessor_name,
                                                          current_module="nnunetv2.preprocessing")
         return preprocessor_class
 
-    @property
+    @cached_property
     def batch_size(self) -> int:
         return self.configuration['batch_size']
 
-    @property
+    @cached_property
     def patch_size(self) -> List[int]:
         return self.configuration['patch_size']
 
-    @property
+    @cached_property
     def median_image_size_in_voxels(self) -> List[int]:
         return self.configuration['median_image_size_in_voxels']
 
-    @property
+    @cached_property
     def spacing(self) -> List[float]:
         return self.configuration['spacing']
 
-    @property
+    @cached_property
     def normalization_schemes(self) -> List[str]:
         return self.configuration['normalization_schemes']
 
-    @property
+    @cached_property
     def use_mask_for_norm(self) -> List[bool]:
         return self.configuration['use_mask_for_norm']
 
-    @property
+    @cached_property
     def UNet_class_name(self) -> str:
         return self.configuration['UNet_class_name']
 
-    @property
-    @lru_cache(maxsize=1)
+    @cached_property
     def UNet_class(self) -> Type[nn.Module]:
         unet_class = recursive_find_python_class(join(dynamic_network_architectures.__path__[0], "architectures"),
                                                  self.UNet_class_name,
@@ -93,36 +91,35 @@ class ConfigurationManager(object):
                                'it (probably just overwrite build_network_architecture of your trainer.')
         return unet_class
 
-    @property
+    @cached_property
     def UNet_base_num_features(self) -> int:
         return self.configuration['UNet_base_num_features']
 
-    @property
+    @cached_property
     def n_conv_per_stage_encoder(self) -> List[int]:
         return self.configuration['n_conv_per_stage_encoder']
 
-    @property
+    @cached_property
     def n_conv_per_stage_decoder(self) -> List[int]:
         return self.configuration['n_conv_per_stage_decoder']
 
-    @property
+    @cached_property
     def num_pool_per_axis(self) -> List[int]:
         return self.configuration['num_pool_per_axis']
 
-    @property
+    @cached_property
     def pool_op_kernel_sizes(self) -> List[List[int]]:
         return self.configuration['pool_op_kernel_sizes']
 
-    @property
+    @cached_property
     def conv_kernel_sizes(self) -> List[List[int]]:
         return self.configuration['conv_kernel_sizes']
 
-    @property
+    @cached_property
     def unet_max_num_features(self) -> int:
         return self.configuration['unet_max_num_features']
 
-    @property
-    @lru_cache(maxsize=1)
+    @cached_property
     def resampling_fn_data(self) -> Callable[
         [Union[torch.Tensor, np.ndarray],
          Union[Tuple[int, ...], List[int], np.ndarray],
@@ -134,8 +131,7 @@ class ConfigurationManager(object):
         fn = partial(fn, **self.configuration['resampling_fn_data_kwargs'])
         return fn
 
-    @property
-    @lru_cache(maxsize=1)
+    @cached_property
     def resampling_fn_probabilities(self) -> Callable[
         [Union[torch.Tensor, np.ndarray],
          Union[Tuple[int, ...], List[int], np.ndarray],
@@ -147,8 +143,7 @@ class ConfigurationManager(object):
         fn = partial(fn, **self.configuration['resampling_fn_probabilities_kwargs'])
         return fn
 
-    @property
-    @lru_cache(maxsize=1)
+    @cached_property
     def resampling_fn_seg(self) -> Callable[
         [Union[torch.Tensor, np.ndarray],
          Union[Tuple[int, ...], List[int], np.ndarray],
@@ -160,11 +155,11 @@ class ConfigurationManager(object):
         fn = partial(fn, **self.configuration['resampling_fn_seg_kwargs'])
         return fn
 
-    @property
+    @cached_property
     def batch_dice(self) -> bool:
         return self.configuration['batch_dice']
 
-    @property
+    @cached_property
     def next_stage_names(self) -> Union[List[str], None]:
         ret = self.configuration.get('next_stage')
         if ret is not None:
@@ -172,7 +167,7 @@ class ConfigurationManager(object):
                 ret = [ret]
         return ret
 
-    @property
+    @cached_property
     def previous_stage_name(self) -> Union[str, None]:
         return self.configuration.get('previous_stage')
 
@@ -227,41 +222,39 @@ class PlansManager(object):
         configuration_dict = self._internal_resolve_configuration_inheritance(configuration_name)
         return ConfigurationManager(configuration_dict)
 
-    @property
+    @cached_property
     def dataset_name(self) -> str:
         return self.plans['dataset_name']
 
-    @property
+    @cached_property
     def plans_name(self) -> str:
         return self.plans['plans_name']
 
-    @property
+    @cached_property
     def original_median_spacing_after_transp(self) -> List[float]:
         return self.plans['original_median_spacing_after_transp']
 
-    @property
+    @cached_property
     def original_median_shape_after_transp(self) -> List[float]:
         return self.plans['original_median_shape_after_transp']
 
-    @property
-    @lru_cache(maxsize=1)
+    @cached_property
     def image_reader_writer_class(self) -> Type[BaseReaderWriter]:
         return recursive_find_reader_writer_by_name(self.plans['image_reader_writer'])
 
-    @property
+    @cached_property
     def transpose_forward(self) -> List[int]:
         return self.plans['transpose_forward']
 
-    @property
+    @cached_property
     def transpose_backward(self) -> List[int]:
         return self.plans['transpose_backward']
 
-    @property
+    @cached_property
     def available_configurations(self) -> List[str]:
         return list(self.plans['configurations'].keys())
 
-    @property
-    @lru_cache(maxsize=1)
+    @cached_property
     def experiment_planner_class(self) -> Type[ExperimentPlanner]:
         planner_name = self.experiment_planner_name
         experiment_planner = recursive_find_python_class(join(nnunetv2.__path__[0], "experiment_planning"),
@@ -269,12 +262,11 @@ class PlansManager(object):
                                                          current_module="nnunetv2.experiment_planning")
         return experiment_planner
 
-    @property
+    @cached_property
     def experiment_planner_name(self) -> str:
         return self.plans['experiment_planner_used']
 
-    @property
-    @lru_cache(maxsize=1)
+    @cached_property
     def label_manager_class(self) -> Type[LabelManager]:
         return get_labelmanager_class_from_plans(self.plans)
 
@@ -283,7 +275,7 @@ class PlansManager(object):
                                         regions_class_order=dataset_json.get('regions_class_order'),
                                         **kwargs)
 
-    @property
+    @cached_property
     def foreground_intensity_properties_per_channel(self) -> dict:
         if 'foreground_intensity_properties_per_channel' not in self.plans.keys():
             if 'foreground_intensity_properties_by_modality' in self.plans.keys():

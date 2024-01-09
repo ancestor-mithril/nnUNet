@@ -30,11 +30,10 @@ keywords = [
     'nnunet'
 ]
 dependencies = [
-    "torch>=2.0.0",
+    "torch",
     "acvl-utils>=0.2",
     "dynamic-network-architectures>=0.2",
     "tqdm",
-    "dicom2nifti",
     "scipy",
     "batchgenerators>=0.25",
     "numpy",
@@ -42,14 +41,11 @@ dependencies = [
     "scikit-image>=0.19.3",
     "SimpleITK>=2.2.1",
     "pandas",
-    "graphviz",
     'tifffile',
     'requests',
     "nibabel",
     "matplotlib",
     "seaborn",
-    "imagecodecs",
-    "yacs"
 ]
 
 [project.urls]

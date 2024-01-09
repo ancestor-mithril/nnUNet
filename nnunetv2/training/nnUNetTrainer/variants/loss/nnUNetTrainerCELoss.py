@@ -27,15 +27,8 @@ class nnUNetTrainerCELoss(nnUNetTrainer):
 
 
 class nnUNetTrainerCELoss_5epochs(nnUNetTrainerCELoss):
-    def __init__(
-        self,
-        plans: dict,
-        configuration: str,
-        fold: int,
-        dataset_json: dict,
-        unpack_dataset: bool = True,
-        device: torch.device = torch.device("cuda"),
-    ):
+    def __init__(self, plans: dict, configuration: str, fold: int, dataset_json: dict, unpack_dataset: bool = True,
+                 train_steps: int = 250, val_steps: int = 50, device: torch.device = torch.device('cuda')):
         """used for debugging plans etc"""
-        super().__init__(plans, configuration, fold, dataset_json, unpack_dataset, device)
+        super().__init__(plans, configuration, fold, dataset_json, unpack_dataset, train_steps, val_steps, device)
         self.num_epochs = 5

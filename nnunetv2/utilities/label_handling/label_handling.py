@@ -1,11 +1,13 @@
 from __future__ import annotations
+
+from functools import cached_property
+from os.path import join
 from time import time
 from typing import Union, List, Tuple, Type
 
 import numpy as np
 import torch
 from acvl_utils.cropping_and_padding.bounding_boxes import bounding_box_to_slice
-from batchgenerators.utilities.file_and_folder_operations import join
 
 import nnunetv2
 from nnunetv2.utilities.find_class_by_name import recursive_find_python_class
@@ -133,10 +135,12 @@ class LabelManager(object):
         if isinstance(logits, np.ndarray):
             logits = torch.from_numpy(logits)
 
-        with torch.no_grad():
+        with torch.inference_mode():
             # softmax etc is not implemented for half
-            logits = logits.float()
-            probabilities = self.inference_nonlin(logits)
+            # TODO: We can use bfloat16, check whether it's ok.
+            # TODO: Use GPU?
+            # TODO: Time this function to check how much it takes on CPU
+            probabilities = self.inference_nonlin(logits.float())
 
         return probabilities
 
@@ -147,10 +151,6 @@ class LabelManager(object):
 
         predicted_probabilities has to have shape (c, x, y(, z)) where c is the number of classes/regions
         """
-        if not isinstance(predicted_probabilities, (np.ndarray, torch.Tensor)):
-            raise RuntimeError(f"Unexpected input type. Expected np.ndarray or torch.Tensor,"
-                               f" got {type(predicted_probabilities)}")
-
         if self.has_regions:
             assert self.regions_class_order is not None, 'if region-based training is requested then you need to ' \
                                                          'define regions_class_order!'
@@ -218,15 +218,15 @@ class LabelManager(object):
                 (isinstance(i, (tuple, list)) and not (
                         len(np.unique(i)) == 1 and np.unique(i)[0] == 0))]
 
-    @property
+    @cached_property
     def foreground_regions(self):
         return self.filter_background(self.all_regions)
 
-    @property
+    @cached_property
     def foreground_labels(self):
         return self.filter_background(self.all_labels)
 
-    @property
+    @cached_property
     def num_segmentation_heads(self):
         if self.has_regions:
             return len(self.foreground_regions)

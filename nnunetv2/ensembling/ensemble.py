@@ -2,12 +2,13 @@ import argparse
 import multiprocessing
 import shutil
 from copy import deepcopy
-from multiprocessing import Pool
+from os.path import join, isfile, isdir
 from typing import List, Union, Tuple
 
 import numpy as np
-from batchgenerators.utilities.file_and_folder_operations import load_json, join, subfiles, \
-    maybe_mkdir_p, isdir, save_pickle, load_pickle, isfile
+from batchgenerators.utilities.file_and_folder_operations import load_json, subfiles, \
+    maybe_mkdir_p, load_pickle, write_pickle
+
 from nnunetv2.configuration import default_num_processes
 from nnunetv2.imageio.base_reader_writer import BaseReaderWriter
 from nnunetv2.utilities.label_handling.label_handling import LabelManager
@@ -43,7 +44,7 @@ def merge_files(list_of_files,
     image_reader_writer.write_seg(segmentation, output_filename_truncated + output_file_ending, properties)
     if save_probabilities:
         np.savez_compressed(output_filename_truncated + '.npz', probabilities=probabilities)
-        save_pickle(probabilities, output_filename_truncated + '.pkl')
+        write_pickle(probabilities, output_filename_truncated + '.pkl')
 
 
 def ensemble_folders(list_of_input_folders: List[str],

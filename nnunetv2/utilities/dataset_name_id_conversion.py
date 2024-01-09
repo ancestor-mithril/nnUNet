@@ -11,10 +11,13 @@
 #    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 #    See the License for the specific language governing permissions and
 #    limitations under the License.
+import os
+from os.path import isdir
 from typing import Union
 
+from batchgenerators.utilities.file_and_folder_operations import subdirs
+
 from nnunetv2.paths import nnUNet_preprocessed, nnUNet_raw, nnUNet_results
-from batchgenerators.utilities.file_and_folder_operations import *
 import numpy as np
 
 

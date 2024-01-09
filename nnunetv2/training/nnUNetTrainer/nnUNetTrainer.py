@@ -6,6 +6,7 @@ import sys
 import warnings
 from copy import deepcopy
 from datetime import datetime
+from os.path import join, isfile
 from time import time, sleep
 from typing import Union, Tuple, List
 
@@ -19,8 +20,13 @@ from batchgenerators.transforms.noise_transforms import GaussianNoiseTransform, 
 from batchgenerators.transforms.resample_transforms import SimulateLowResolutionTransform
 from batchgenerators.transforms.spatial_transforms import SpatialTransform, MirrorTransform
 from batchgenerators.transforms.utility_transforms import RemoveLabelTransform, RenameTransform, NumpyToTensor
-from batchgenerators.utilities.file_and_folder_operations import join, load_json, isfile, save_json, maybe_mkdir_p
-from torch._dynamo import OptimizedModule
+from batchgenerators.utilities.file_and_folder_operations import load_json, save_json, maybe_mkdir_p
+
+if torch.__version__.startswith('1'):
+    class OptimizedModule:
+        pass
+else:
+    from torch._dynamo import OptimizedModule
 
 from nnunetv2.configuration import ANISO_THRESHOLD, default_num_processes
 from nnunetv2.evaluation.evaluate_predictions import compute_metrics_on_folder
@@ -50,7 +56,7 @@ from nnunetv2.training.loss.deep_supervision import DeepSupervisionWrapper
 from nnunetv2.training.loss.dice import get_tp_fp_fn_tn, MemoryEfficientSoftDiceLoss
 from nnunetv2.training.lr_scheduler.polylr import PolyLRScheduler
 from nnunetv2.utilities.collate_outputs import collate_outputs
-from nnunetv2.utilities.default_n_proc_DA import get_allowed_n_proc_DA
+from nnunetv2.utilities.default_n_proc_DA import get_allowed_n_proc_DA, get_allowed_n_proc_DA_val
 from nnunetv2.utilities.file_path_utilities import check_workers_alive_and_busy
 from nnunetv2.utilities.get_network_from_plans import get_network_from_plans
 from nnunetv2.utilities.helpers import empty_cache, dummy_context
@@ -66,7 +72,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 
 class nnUNetTrainer(object):
     def __init__(self, plans: dict, configuration: str, fold: int, dataset_json: dict, unpack_dataset: bool = True,
-                 device: torch.device = torch.device('cuda')):
+                 train_steps: int = 250, val_steps: int = 50, device: torch.device = torch.device('cuda')):
         # From https://grugbrain.dev/. Worth a read ya big brains ;-)
 
         # apex predator of grug is complexity
@@ -142,8 +148,8 @@ class nnUNetTrainer(object):
         self.initial_lr = 1e-2
         self.weight_decay = 3e-5
         self.oversample_foreground_percent = 0.33
-        self.num_iterations_per_epoch = 250
-        self.num_val_iterations_per_epoch = 50
+        self.num_iterations_per_epoch = train_steps
+        self.num_val_iterations_per_epoch = val_steps
         self.num_epochs = 1000
         self.current_epoch = 0
         self.enable_deep_supervision = True
@@ -626,16 +632,20 @@ class nnUNetTrainer(object):
 
         dl_tr, dl_val = self.get_plain_dataloaders(initial_patch_size, dim)
 
-        allowed_num_processes = get_allowed_n_proc_DA()
-        if allowed_num_processes == 0:
+        num_processes_train = get_allowed_n_proc_DA()
+        if num_processes_train == 0:
             mt_gen_train = SingleThreadedAugmenter(dl_tr, tr_transforms)
-            mt_gen_val = SingleThreadedAugmenter(dl_val, val_transforms)
         else:
             mt_gen_train = LimitedLenWrapper(self.num_iterations_per_epoch, data_loader=dl_tr, transform=tr_transforms,
-                                             num_processes=allowed_num_processes, num_cached=6, seeds=None,
+                                             num_processes=num_processes_train, num_cached=6, seeds=None,
                                              pin_memory=self.device.type == 'cuda', wait_time=0.02)
+
+        num_processes_val = get_allowed_n_proc_DA_val()
+        if num_processes_val == 0:
+            mt_gen_val = SingleThreadedAugmenter(dl_val, val_transforms)
+        else:
             mt_gen_val = LimitedLenWrapper(self.num_val_iterations_per_epoch, data_loader=dl_val,
-                                           transform=val_transforms, num_processes=max(1, allowed_num_processes // 2),
+                                           transform=val_transforms, num_processes=num_processes_val,
                                            num_cached=3, seeds=None, pin_memory=self.device.type == 'cuda',
                                            wait_time=0.02)
         return mt_gen_train, mt_gen_val
@@ -926,6 +936,7 @@ class nnUNetTrainer(object):
         self.logger.log('train_losses', loss_here, self.current_epoch)
 
     def on_validation_epoch_start(self):
+        self.logger.log('epoch_val_timestamps', time(), self.current_epoch)
         self.network.eval()
 
     def validation_step(self, batch: dict) -> dict:
@@ -953,7 +964,7 @@ class nnUNetTrainer(object):
             target = target[0]
 
         # the following is needed for online evaluation. Fake dice (green line)
-        axes = [0] + list(range(2, output.ndim))
+        axes = (0,) + tuple(range(2, output.ndim))
 
         if self.label_manager.has_regions:
             predicted_segmentation_onehot = (torch.sigmoid(output) > 0.5).long()
@@ -966,9 +977,10 @@ class nnUNetTrainer(object):
 
         if self.label_manager.has_ignore_label:
             if not self.label_manager.has_regions:
-                mask = (target != self.label_manager.ignore_label).float()
+                mask = target == self.label_manager.ignore_label
                 # CAREFUL that you don't rely on target after this line!
-                target[target == self.label_manager.ignore_label] = 0
+                target[mask] = 0
+                mask = mask.logical_not_().to(torch.float32)
             else:
                 mask = 1 - target[:, -1:]
                 # CAREFUL that you don't rely on target after this line!
@@ -1019,7 +1031,8 @@ class nnUNetTrainer(object):
         else:
             loss_here = np.mean(outputs_collated['loss'])
 
-        global_dc_per_class = [i for i in [2 * i / (2 * i + j + k) for i, j, k in zip(tp, fp, fn)]]
+        tp *= 2
+        global_dc_per_class = tp / (tp + fp + fn)
         mean_fg_dice = np.nanmean(global_dc_per_class)
         self.logger.log('mean_fg_dice', mean_fg_dice, self.current_epoch)
         self.logger.log('dice_per_class_or_region', global_dc_per_class, self.current_epoch)
@@ -1031,12 +1044,17 @@ class nnUNetTrainer(object):
     def on_epoch_end(self):
         self.logger.log('epoch_end_timestamps', time(), self.current_epoch)
 
+        # todo find a solution for this stupid shit (print the whole batch at once)
         self.print_to_log_file('train_loss', np.round(self.logger.my_fantastic_logging['train_losses'][-1], decimals=4))
         self.print_to_log_file('val_loss', np.round(self.logger.my_fantastic_logging['val_losses'][-1], decimals=4))
-        self.print_to_log_file('Pseudo dice', [np.round(i, decimals=4) for i in
-                                               self.logger.my_fantastic_logging['dice_per_class_or_region'][-1]])
-        self.print_to_log_file(
-            f"Epoch time: {np.round(self.logger.my_fantastic_logging['epoch_end_timestamps'][-1] - self.logger.my_fantastic_logging['epoch_start_timestamps'][-1], decimals=2)} s")
+        self.print_to_log_file('Pseudo dice', np.round(
+            self.logger.my_fantastic_logging['dice_per_class_or_region'][-1], decimals=4))
+
+        val_start = self.logger.my_fantastic_logging['epoch_val_timestamps'][-1]
+        train_time = val_start - self.logger.my_fantastic_logging['epoch_start_timestamps'][-1]
+        val_time = self.logger.my_fantastic_logging['epoch_end_timestamps'][-1] - val_start
+        self.print_to_log_file(f"Epoch time: {np.round(train_time, decimals=2)} + {np.round(val_time, decimals=2)} = "
+                               f"{np.round(train_time + val_time, decimals=2)} s")
 
         # handling periodic checkpointing
         current_epoch = self.current_epoch
@@ -1254,14 +1272,14 @@ class nnUNetTrainer(object):
 
             self.on_train_epoch_start()
             train_outputs = []
-            for batch_id in range(self.num_iterations_per_epoch):
+            for _ in range(self.num_iterations_per_epoch):
                 train_outputs.append(self.train_step(next(self.dataloader_train)))
             self.on_train_epoch_end(train_outputs)
 
-            with torch.no_grad():
+            with torch.inference_mode():
                 self.on_validation_epoch_start()
                 val_outputs = []
-                for batch_id in range(self.num_val_iterations_per_epoch):
+                for _ in range(self.num_val_iterations_per_epoch):
                     val_outputs.append(self.validation_step(next(self.dataloader_val)))
                 self.on_validation_epoch_end(val_outputs)
 

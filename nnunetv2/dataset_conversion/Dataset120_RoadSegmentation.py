@@ -1,8 +1,9 @@
 import multiprocessing
 import shutil
 from multiprocessing import Pool
+from os.path import join
 
-from batchgenerators.utilities.file_and_folder_operations import *
+from batchgenerators.utilities.file_and_folder_operations import maybe_mkdir_p, subfiles
 
 from nnunetv2.dataset_conversion.generate_dataset_json import generate_dataset_json
 from nnunetv2.paths import nnUNet_raw

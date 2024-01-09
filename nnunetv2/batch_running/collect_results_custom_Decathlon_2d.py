@@ -1,4 +1,4 @@
-from batchgenerators.utilities.file_and_folder_operations import *
+from os.path import join
 
 from nnunetv2.batch_running.collect_results_custom_Decathlon import collect_results, summarize
 from nnunetv2.paths import nnUNet_results

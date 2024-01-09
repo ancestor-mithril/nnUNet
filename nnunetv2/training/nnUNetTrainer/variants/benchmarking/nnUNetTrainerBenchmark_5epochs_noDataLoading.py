@@ -7,16 +7,9 @@ from nnunetv2.utilities.label_handling.label_handling import determine_num_input
 
 
 class nnUNetTrainerBenchmark_5epochs_noDataLoading(nnUNetTrainerBenchmark_5epochs):
-    def __init__(
-        self,
-        plans: dict,
-        configuration: str,
-        fold: int,
-        dataset_json: dict,
-        unpack_dataset: bool = True,
-        device: torch.device = torch.device("cuda"),
-    ):
-        super().__init__(plans, configuration, fold, dataset_json, unpack_dataset, device)
+    def __init__(self, plans: dict, configuration: str, fold: int, dataset_json: dict, unpack_dataset: bool = True,
+                 train_steps: int = 250, val_steps: int = 50, device: torch.device = torch.device('cuda')):
+        super().__init__(plans, configuration, fold, dataset_json, unpack_dataset, train_steps, val_steps, device)
         self._set_batch_size_and_oversample()
         num_input_channels = determine_num_input_channels(
             self.plans_manager, self.configuration_manager, self.dataset_json
@@ -51,7 +44,7 @@ class nnUNetTrainerBenchmark_5epochs_noDataLoading(nnUNetTrainerBenchmark_5epoch
                     train_outputs.append(self.train_step(self.dummy_batch))
                 self.on_train_epoch_end(train_outputs)
 
-                with torch.no_grad():
+                with torch.inference_mode():
                     self.on_validation_epoch_start()
                     val_outputs = []
                     for batch_id in range(self.num_val_iterations_per_epoch):

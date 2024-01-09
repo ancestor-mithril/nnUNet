@@ -58,6 +58,7 @@ class DatasetFingerprintExtractor(object):
 
         # segmentation is 4d: 1,x,y,z. We need to remove the empty dimension for the following code to work
         foreground_mask = segmentation[0] > 0
+        percentiles = np.array((0.5, 50.0, 99.5))
 
         for i in range(len(images)):
             foreground_pixels = images[i][foreground_mask]
@@ -65,17 +66,27 @@ class DatasetFingerprintExtractor(object):
             # sample with replacement so that we don't get issues with cases that have less than num_samples
             # foreground_pixels. We could also just sample less in those cases but that would than cause these
             # training cases to be underrepresented
-            intensities_per_channel.append(
-                rs.choice(foreground_pixels, num_samples, replace=True) if num_fg > 0 else [])
-            intensity_statistics_per_channel.append({
-                'mean': np.mean(foreground_pixels) if num_fg > 0 else np.nan,
-                'median': np.median(foreground_pixels) if num_fg > 0 else np.nan,
-                'min': np.min(foreground_pixels) if num_fg > 0 else np.nan,
-                'max': np.max(foreground_pixels) if num_fg > 0 else np.nan,
-                'percentile_99_5': np.percentile(foreground_pixels, 99.5) if num_fg > 0 else np.nan,
-                'percentile_00_5': np.percentile(foreground_pixels, 0.5) if num_fg > 0 else np.nan,
-
-            })
+            if num_fg > 0:
+                intensities_per_channel.append(rs.choice(foreground_pixels, num_samples, replace=True))
+                percentile_00_5, median, percentile_99_5 = np.percentile(foreground_pixels, percentiles)
+                intensity_statistics_per_channel.append({
+                    'mean': np.mean(foreground_pixels),
+                    'median': median,
+                    'min': np.min(foreground_pixels),
+                    'max': np.max(foreground_pixels),
+                    'percentile_99_5': percentile_99_5,
+                    'percentile_00_5': percentile_00_5,
+                })
+            else:
+                intensities_per_channel.append([])
+                intensity_statistics_per_channel.append({
+                    'mean': np.nan,
+                    'median': np.nan,
+                    'min': np.nan,
+                    'max': np.nan,
+                    'percentile_99_5': np.nan,
+                    'percentile_00_5': np.nan,
+                })
 
         return intensities_per_channel, intensity_statistics_per_channel
 
@@ -132,19 +143,18 @@ class DatasetFingerprintExtractor(object):
                 workers = [j for j in p._pool]
                 with tqdm(desc=None, total=len(self.dataset), disable=self.verbose) as pbar:
                     while len(remaining) > 0:
-                        all_alive = all([j.is_alive() for j in workers])
-                        if not all_alive:
-                            raise RuntimeError('Some background worker is 6 feet under. Yuck. \n'
-                                               'OK jokes aside.\n'
-                                               'One of your background processes is missing. This could be because of '
-                                               'an error (look for an error message) or because it was killed '
-                                               'by your OS due to running out of RAM. If you don\'t see '
-                                               'an error message, out of RAM is likely the problem. In that case '
-                                               'reducing the number of workers might help')
-                        done = [i for i in remaining if r[i].ready()]
-                        for _ in done:
-                            pbar.update()
-                        remaining = [i for i in remaining if i not in done]
+                        for j in workers:
+                            if not j.is_alive():
+                                raise RuntimeError('Some background worker is 6 feet under. Yuck. \n'
+                                                   'OK jokes aside.\n'
+                                                   'One of your background processes is missing. This could be because of '
+                                                   'an error (look for an error message) or because it was killed '
+                                                   'by your OS due to running out of RAM. If you don\'t see '
+                                                   'an error message, out of RAM is likely the problem. In that case '
+                                                   'reducing the number of workers might help')
+                        n = len(remaining)
+                        remaining = [i for i in remaining if not r[i].ready()]
+                        pbar.update(n - len(remaining))
                         sleep(0.1)
 
             # results = ptqdm(DatasetFingerprintExtractor.analyze_case,
@@ -165,15 +175,19 @@ class DatasetFingerprintExtractor(object):
                                  if 'channel_names' in self.dataset_json.keys()
                                  else self.dataset_json['modality'].keys())
             intensity_statistics_per_channel = {}
+            foreground_intensities_per_channel = np.array(foreground_intensities_per_channel)
+            percentiles = np.array((0.5, 50.0, 99.5))
             for i in range(num_channels):
+                percentile_00_5, median, percentile_99_5 = np.percentile(
+                    foreground_intensities_per_channel[i], percentiles)
                 intensity_statistics_per_channel[i] = {
                     'mean': float(np.mean(foreground_intensities_per_channel[i])),
-                    'median': float(np.median(foreground_intensities_per_channel[i])),
+                    'median': float(median),
                     'std': float(np.std(foreground_intensities_per_channel[i])),
                     'min': float(np.min(foreground_intensities_per_channel[i])),
                     'max': float(np.max(foreground_intensities_per_channel[i])),
-                    'percentile_99_5': float(np.percentile(foreground_intensities_per_channel[i], 99.5)),
-                    'percentile_00_5': float(np.percentile(foreground_intensities_per_channel[i], 0.5)),
+                    'percentile_99_5': float(percentile_99_5),
+                    'percentile_00_5': float(percentile_00_5),
                 }
 
             fingerprint = {
