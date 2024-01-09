@@ -269,6 +269,8 @@ class nnUNetPredictor(object):
         if isinstance(dataset_json, str):
             dataset_json = load_json(dataset_json)
         label_manager = plans_manager.get_label_manager(dataset_json)
+        if self.device.type == 'cuda':
+            torch.backends.cudnn.benchmark = True
 
         for i in range(len(input_list_of_lists)):
             ofile = output_filename_truncated[i] if output_filename_truncated is not None else None

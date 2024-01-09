@@ -134,6 +134,7 @@ def resample_data_or_seg(data: np.ndarray, new_shape: Union[Tuple[float, ...], L
     :param order_z: only applies if do_separate_z is True
     :return:
     """
+    # TODO: Try torchvision resize.
     assert data.ndim == 4, "data must be (c, x, y, z)"
     assert len(new_shape) == data.ndim - 1
 
