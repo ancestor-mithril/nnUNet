@@ -2,7 +2,6 @@ import inspect
 import itertools
 import multiprocessing
 import os
-import traceback
 from copy import deepcopy
 from time import sleep
 from typing import Tuple, Union, List, Optional
@@ -547,6 +546,7 @@ class nnUNetPredictor(object):
         return prediction
 
     def _internal_get_sliding_window_slicers(self, image_size: Tuple[int, ...]):
+        # TODO: time
         slicers = []
         if len(self.configuration_manager.patch_size) < len(image_size):
             assert len(self.configuration_manager.patch_size) == len(
@@ -589,11 +589,12 @@ class nnUNetPredictor(object):
             # x should be 5d for 3d images and 4d for 2d. so the max value of mirror_axes cannot exceed len(x.shape) - 3
             assert max(mirror_axes) <= x.ndim - 3, 'mirror_axes does not match the dimension of the input!'
 
+            mirror_axes = [m + 2 for m in mirror_axes]
             axes_combinations = [
-                c for i in range(len(mirror_axes)) for c in itertools.combinations([m + 2 for m in mirror_axes], i + 1)
+                c for i in range(len(mirror_axes)) for c in itertools.combinations(mirror_axes, i + 1)
             ]
             for axes in axes_combinations:
-                prediction += torch.flip(self.network(torch.flip(x, (*axes,))), (*axes,))
+                prediction += torch.flip(self.network(torch.flip(x, axes)), axes)
             prediction /= (len(axes_combinations) + 1)
         return prediction
 
@@ -603,12 +604,12 @@ class nnUNetPredictor(object):
                                                        do_on_device: bool = True,
                                                        ):
         results_device = self.device if do_on_device else torch.device('cpu')
-        empty_cache(self.device)  # TODO: Check when called
+        empty_cache(self.device)
 
         # move data to device
         if self.verbose:
             print(f'move image to device {results_device}')
-        data = data.to(results_device, non_blocking=True)
+        data = data.to(results_device, non_blocking=True, memory_format=torch.contiguous_format)
 
         if self.verbose:
             print(f'preallocating results arrays on device {results_device}')
@@ -626,7 +627,7 @@ class nnUNetPredictor(object):
             print(f'running prediction: {len(slicers)} steps')
         for sl in tqdm(slicers, disable=not self.allow_tqdm):
             workon = data[sl][None]
-            workon = workon.to(self.device, non_blocking=False)
+            workon = workon.to(self.device, non_blocking=True)
 
             prediction = self._internal_maybe_mirror_and_predict(workon)[0].to(results_device)
             if self.use_gaussian:
@@ -658,39 +659,38 @@ class nnUNetPredictor(object):
         # If the device_type is 'mps' then it will complain that mps is not implemented, even if enabled=False
         # is set. Whyyyyyyy. (this is why we don't make use of enabled=False)
         # So autocast will only be active if we have a cuda device.
-        with torch.inference_mode():
-            with torch.autocast(self.device.type, enabled=True) if self.device.type == 'cuda' else dummy_context():
-                assert input_image.ndim == 4, 'input_image must be a 4D np.ndarray or torch.Tensor (c, x, y, z)'
+        with torch.autocast(self.device.type, enabled=True) if self.device.type == 'cuda' else dummy_context():
+            assert input_image.ndim == 4, 'input_image must be a 4D torch.Tensor (c, x, y, z)'
 
-                if self.verbose:
-                    print(f'Input shape: {input_image.shape}')
-                    print("step_size:", self.tile_step_size)
-                    print("mirror_axes:", self.allowed_mirroring_axes if self.use_mirroring else None)
+            if self.verbose:
+                print(f'Input shape: {input_image.shape}')
+                print("step_size:", self.tile_step_size)
+                print("mirror_axes:", self.allowed_mirroring_axes if self.use_mirroring else None)
 
-                # if input_image is smaller than tile_size we need to pad it to tile_size.
-                data, slicer_revert_padding = pad_nd_image(input_image, self.configuration_manager.patch_size,
-                                                           'constant', {'value': 0}, True,
-                                                           None)
+            # if input_image is smaller than tile_size we need to pad it to tile_size.
+            data, slicer_revert_padding = pad_nd_image(input_image, self.configuration_manager.patch_size,
+                                                       'constant', {'value': 0}, True,
+                                                       None)
 
-                slicers = self._internal_get_sliding_window_slicers(data.shape[1:])
+            slicers = self._internal_get_sliding_window_slicers(data.shape[1:])
 
-                if self.perform_everything_on_device and self.device != 'cpu':
-                    # we can run OOM in which case we need to fall back to CPU as a results device
-                    try:
-                        predicted_logits = self._internal_predict_sliding_window_return_logits(
-                            data, slicers, self.perform_everything_on_device)
-                    except RuntimeError:
-                        print('Prediction on device was unsuccessful, probably due to a lack of memory. '
-                              'Moving results arrays to CPU')
-                        empty_cache(self.device)
-                        predicted_logits = self._internal_predict_sliding_window_return_logits(data, slicers, False)
-                else:
+            if self.perform_everything_on_device and self.device != 'cpu':
+                # we can run OOM in which case we need to fall back to CPU as a results device
+                try:
                     predicted_logits = self._internal_predict_sliding_window_return_logits(
                         data, slicers, self.perform_everything_on_device)
+                except RuntimeError:
+                    print('Prediction on device was unsuccessful, probably due to a lack of memory. '
+                          'Moving results arrays to CPU')
+                    empty_cache(self.device)
+                    predicted_logits = self._internal_predict_sliding_window_return_logits(data, slicers, False)
+            else:
+                predicted_logits = self._internal_predict_sliding_window_return_logits(
+                    data, slicers, self.perform_everything_on_device)
 
-                empty_cache(self.device)
-                # revert padding
-                predicted_logits = predicted_logits[(slice(None), *slicer_revert_padding[1:])]
+            empty_cache(self.device)
+            # revert padding
+            predicted_logits = predicted_logits[(slice(None), *slicer_revert_padding[1:])]
         return predicted_logits
 
 
