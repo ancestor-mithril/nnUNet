@@ -41,11 +41,12 @@ class ZScoreNormalization(ImageNormalization):
             mask = seg >= 0
             mean = image[mask].mean()
             std = image[mask].std()
-            image[mask] = (image[mask] - mean) / (max(std, 1e-8))
+            image[mask] = (image[mask] - mean) / max(std, 1e-8)
         else:
             mean = image.mean()
             std = image.std()
-            image = (image - mean) / (max(std, 1e-8))
+            image -= mean
+            image /= max(std, 1e-8)
         return image
 
 
@@ -53,20 +54,16 @@ class CTNormalization(ImageNormalization):
     leaves_pixels_outside_mask_at_zero_if_use_mask_for_norm_is_true = False
 
     def run(self, image: np.ndarray, seg: np.ndarray = None) -> np.ndarray:
-        # TODO: Check all operations inplace
-        # TODO: Check all operations on GPU
         assert self.intensityproperties is not None, "CTNormalization requires intensity properties"
         image = image.astype(self.target_dtype)
         mean_intensity = self.intensityproperties['mean']
         std_intensity = self.intensityproperties['std']
         lower_bound = self.intensityproperties['percentile_00_5']
         upper_bound = self.intensityproperties['percentile_99_5']
-        image = np.clip(image, lower_bound, upper_bound)
-        return (image - mean_intensity) / max(std_intensity, 1e-8)
-        # np.clip(image, lower_bound, upper_bound, out=image)
-        # image -= mean_intensity
-        # image /= max(std_intensity, 1e-8)
-        # return image
+        np.clip(image, lower_bound, upper_bound, out=image)
+        image -= mean_intensity
+        image /= max(std_intensity, 1e-8)
+        return image
 
 
 class NoNormalization(ImageNormalization):
@@ -81,8 +78,8 @@ class RescaleTo01Normalization(ImageNormalization):
 
     def run(self, image: np.ndarray, seg: np.ndarray = None) -> np.ndarray:
         image = image.astype(self.target_dtype)
-        image = image - image.min()
-        image = image / np.clip(image.max(), a_min=1e-8, a_max=None)
+        image -= image.min()
+        image /= np.clip(image.max(), a_min=1e-8, a_max=None)
         return image
 
 
@@ -95,6 +92,6 @@ class RGBTo01Normalization(ImageNormalization):
         assert image.max() <= 255, "RGB images are uint 8, for whatever reason I found pixel values greater than 255" \
                                    ". Your images do not seem to be RGB images"
         image = image.astype(self.target_dtype)
-        image = image / 255.
+        image /= 255.
         return image
 
