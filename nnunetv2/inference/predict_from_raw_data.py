@@ -424,7 +424,8 @@ class nnUNetPredictor(object):
                     sleep(0.1)
                     proceed = not check_workers_alive_and_busy(export_pool, worker_list, r, allowed_num_queued=2)
 
-                prediction = self.predict_logits_from_preprocessed_data(data)
+                with torch.inference_mode():
+                    prediction = self.predict_logits_from_preprocessed_data(data)
 
                 if ofile is not None:
                     # this needs to go into background processes
