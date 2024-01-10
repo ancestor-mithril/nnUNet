@@ -5,10 +5,15 @@ from nnunetv2.preprocessing.normalization.default_normalization_schemes import C
 
 channel_name_to_normalization_mapping = {
     'CT': CTNormalization,
+    'CTNormalization': CTNormalization,
     'noNorm': NoNormalization,
+    'NoNormalization': NoNormalization,
     'zscore': ZScoreNormalization,
+    'ZScoreNormalization': ZScoreNormalization,
     'rescale_to_0_1': RescaleTo01Normalization,
-    'rgb_to_0_1': RGBTo01Normalization
+    'RescaleTo01Normalization': RescaleTo01Normalization,
+    'rgb_to_0_1': RGBTo01Normalization,
+    'RGBTo01Normalization': RGBTo01Normalization,
 }
 
 

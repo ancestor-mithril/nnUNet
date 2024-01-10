@@ -25,6 +25,7 @@ from tqdm import tqdm
 import nnunetv2
 from nnunetv2.paths import nnUNet_preprocessed, nnUNet_raw
 from nnunetv2.preprocessing.cropping.cropping import crop_to_nonzero
+from nnunetv2.preprocessing.normalization.map_channel_name_to_normalization import get_normalization_scheme
 from nnunetv2.preprocessing.resampling.default_resampling import compute_new_shape
 from nnunetv2.utilities.dataset_name_id_conversion import maybe_convert_to_dataset_name
 from nnunetv2.utilities.find_class_by_name import recursive_find_python_class
@@ -165,7 +166,7 @@ class DefaultPreprocessor(object):
             if isinstance(c, (tuple, list)):
                 mask = seg == c[0]
                 for cc in c[1:]:
-                    mask = mask | (seg == cc)
+                    mask |= (seg == cc)
                 all_locs = np.argwhere(mask)
             else:
                 all_locs = np.argwhere(seg == c)
@@ -185,11 +186,7 @@ class DefaultPreprocessor(object):
                    foreground_intensity_properties_per_channel: dict) -> np.ndarray:
         for c in range(data.shape[0]):
             scheme = configuration_manager.normalization_schemes[c]
-            normalizer_class = recursive_find_python_class(join(nnunetv2.__path__[0], "preprocessing", "normalization"),
-                                                           scheme,
-                                                           'nnunetv2.preprocessing.normalization')
-            if normalizer_class is None:
-                raise RuntimeError(f'Unable to locate class \'{scheme}\' for normalization')
+            normalizer_class = get_normalization_scheme(scheme)
             normalizer = normalizer_class(use_mask_for_norm=configuration_manager.use_mask_for_norm[c],
                                           intensityproperties=foreground_intensity_properties_per_channel[str(c)])
             data[c] = normalizer.run(data[c], seg[0])
