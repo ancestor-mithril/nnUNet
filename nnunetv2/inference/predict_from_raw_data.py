@@ -60,10 +60,8 @@ class nnUNetPredictor(object):
         self.use_gaussian = use_gaussian
         self.use_mirroring = use_mirroring
         if device.type == 'cuda':
-            # device = torch.device(type='cuda', index=0)  # set the desired GPU with CUDA_VISIBLE_DEVICES!
-            # why would I ever want to do that. Stupid dobby. This kills DDP inference...
-            pass
-        if device.type != 'cuda':
+            torch.backends.cudnn.benchmark = True
+        else:
             print(f'perform_everything_on_device=True is only supported for cuda devices! Setting this to False')
             perform_everything_on_device = False
         self.device = device
@@ -269,8 +267,6 @@ class nnUNetPredictor(object):
         if isinstance(dataset_json, str):
             dataset_json = load_json(dataset_json)
         label_manager = plans_manager.get_label_manager(dataset_json)
-        if self.device.type == 'cuda':
-            torch.backends.cudnn.benchmark = True
 
         for i in range(len(input_list_of_lists)):
             ofile = output_filename_truncated[i] if output_filename_truncated is not None else None
@@ -290,7 +286,6 @@ class nnUNetPredictor(object):
                 data = np.vstack((data, seg_onehot))
 
             data = torch.from_numpy(data).to(dtype=torch.float32, memory_format=torch.contiguous_format)
-            # TODO: test torch.channels_last_3d!
             if self.device.type == 'cuda':
                 data = data.pin_memory()
 
