@@ -55,11 +55,12 @@ class CTNormalization(ImageNormalization):
 
     def run(self, image: np.ndarray, seg: np.ndarray = None) -> np.ndarray:
         assert self.intensityproperties is not None, "CTNormalization requires intensity properties"
-        image = image.astype(self.target_dtype, copy=False)
         mean_intensity = self.intensityproperties['mean']
         std_intensity = self.intensityproperties['std']
         lower_bound = self.intensityproperties['percentile_00_5']
         upper_bound = self.intensityproperties['percentile_99_5']
+
+        image = image.astype(self.target_dtype, copy=False)
         np.clip(image, lower_bound, upper_bound, out=image)
         image -= mean_intensity
         image /= max(std_intensity, 1e-8)

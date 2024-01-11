@@ -47,7 +47,7 @@ color_cycle = (
 
 def hex_to_rgb(hex: str):
     assert len(hex) == 6
-    return tuple(int(hex[i:i + 2], 16) for i in (0, 2, 4))
+    return tuple([int(hex[i:i + 2], 16) for i in (0, 2, 4)])
 
 
 def generate_overlay(input_image: np.ndarray, segmentation: np.ndarray, mapping: dict = None,
