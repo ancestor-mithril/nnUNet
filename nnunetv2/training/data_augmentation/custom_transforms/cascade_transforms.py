@@ -121,7 +121,7 @@ class ApplyRandomBinaryOperatorTransform(AbstractTransform):
                         if not np.any(workon):
                             continue
                         # print(np.unique(workon))
-                        res = operation(workon, selem).astype(data_dict[self.key].dtype)
+                        res = operation(workon, selem).astype(data_dict[self.key].dtype, copy=False)
                         # print('ApplyRandomBinaryOperatorTransform', c, operation, np.sum(workon), np.sum(res))
                         data_dict[self.key][b, c] = res
 

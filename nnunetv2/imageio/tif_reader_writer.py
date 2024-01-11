@@ -14,10 +14,12 @@
 #    limitations under the License.
 import os.path
 from typing import Tuple, Union, List
+
 import numpy as np
-from nnunetv2.imageio.base_reader_writer import BaseReaderWriter
 import tifffile
-from batchgenerators.utilities.file_and_folder_operations import isfile, load_json, save_json, split_path, join
+from batchgenerators.utilities.file_and_folder_operations import isfile, load_json, save_json, join
+
+from nnunetv2.imageio.base_reader_writer import BaseReaderWriter
 
 
 class Tiff3DIO(BaseReaderWriter):
@@ -66,11 +68,11 @@ class Tiff3DIO(BaseReaderWriter):
             print(image_fnames)
             raise RuntimeError()
 
-        return np.vstack(images).astype(np.float32), {'spacing': spacing}
+        return np.vstack(images).astype(np.float32, copy=False), {'spacing': spacing}
 
     def write_seg(self, seg: np.ndarray, output_fname: str, properties: dict) -> None:
         # not ideal but I really have no clue how to set spacing/resolution information properly in tif files haha
-        tifffile.imwrite(output_fname, data=seg.astype(np.uint8), compression='zlib')
+        tifffile.imwrite(output_fname, data=seg.astype(np.uint8, copy=False), compression='zlib')
         file = os.path.basename(output_fname)
         out_dir = os.path.dirname(output_fname)
         ending = file.split('.')[-1]
@@ -97,4 +99,4 @@ class Tiff3DIO(BaseReaderWriter):
             print(f'WARNING no spacing file found for segmentation {seg_fname}\nAssuming spacing (1, 1, 1).')
             spacing = (1, 1, 1)
 
-        return seg.astype(np.float32), {'spacing': spacing}
+        return seg.astype(np.float32, copy=False), {'spacing': spacing}
