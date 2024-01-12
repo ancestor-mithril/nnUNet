@@ -67,10 +67,10 @@ def labels_to_list_of_regions(labels: List[int]):
 def region_or_label_to_mask(segmentation: np.ndarray, region_or_label: Union[int, Tuple[int, ...]]) -> np.ndarray:
     if np.isscalar(region_or_label):
         return segmentation == region_or_label
-    else:
-        mask = np.zeros_like(segmentation, dtype=bool)
-        for r in region_or_label:
-            mask[segmentation == r] = True
+    # TODO: return np.logical_or.reduce(np.equal.outer(region_or_label, x))
+    mask = np.zeros_like(segmentation, dtype=bool)
+    for r in region_or_label:
+        mask[segmentation == r] = True
     return mask
 
 
