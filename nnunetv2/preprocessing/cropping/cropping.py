@@ -14,8 +14,8 @@ def create_nonzero_mask(data):
     """
 
     assert data.ndim in (3, 4), "data must have shape (C, X, Y, Z) or shape (C, X, Y)"
-    nonzero_mask = np.zeros(data.shape[1:], dtype=bool)
-    for c in range(data.shape[0]):
+    nonzero_mask = data[0] != 0
+    for c in range(1, data.shape[0]):
         nonzero_mask |= data[c] != 0
     return binary_fill_holes(nonzero_mask)
 
