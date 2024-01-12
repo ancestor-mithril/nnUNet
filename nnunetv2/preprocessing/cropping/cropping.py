@@ -14,8 +14,10 @@ def create_nonzero_mask(data):
     """
 
     assert data.ndim in (3, 4), "data must have shape (C, X, Y, Z) or shape (C, X, Y)"
-    # np.logical_or.reduce((data[0] != 0, data[1] != 0, ...))
-    return binary_fill_holes(np.logical_or.reduce(data != 0))
+    nonzero_mask = np.zeros(data.shape[1:], dtype=bool)
+    for c in range(data.shape[0]):
+        nonzero_mask |= data[c] != 0
+    return binary_fill_holes(nonzero_mask)
 
 
 def crop_to_nonzero(data, seg=None, nonzero_label=-1):
@@ -30,19 +32,15 @@ def crop_to_nonzero(data, seg=None, nonzero_label=-1):
     bbox = get_bbox_from_mask(nonzero_mask)
 
     slicer = bounding_box_to_slice(bbox)
-    data = data[(slice(None), *slicer)]
-
-    if seg is not None:
-        seg = seg[(slice(None), *slicer)]
-
     nonzero_mask = nonzero_mask[slicer][None]
+
+    slicer = (slice(None), ) + slicer
+    data = data[slicer]
     if seg is not None:
+        seg = seg[slicer]
         seg[(seg == 0) & (~nonzero_mask)] = nonzero_label
     else:
-        nonzero_mask = nonzero_mask.astype(np.int8)
-        nonzero_mask[nonzero_mask == 0] = nonzero_label
-        nonzero_mask[nonzero_mask > 0] = 0
-        seg = nonzero_mask
+        seg = np.where(nonzero_mask, np.int8(0), np.int8(nonzero_label))
     return data, seg, bbox
 
 
