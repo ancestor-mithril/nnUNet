@@ -205,7 +205,7 @@ class LabelManager(object):
             probs_reverted_cropping[0] = 1
 
         slicer = bounding_box_to_slice(bbox)
-        probs_reverted_cropping[tuple([slice(None)] + list(slicer))] = predicted_probabilities
+        probs_reverted_cropping[(slice(None), ) + slicer] = predicted_probabilities
         return probs_reverted_cropping
 
     @staticmethod
@@ -270,6 +270,8 @@ def convert_labelmap_to_one_hot(segmentation: Union[np.ndarray, torch.Tensor],
         # for i, l in enumerate(all_labels):
         #     result[i] = segmentation == l
     else:
+        # TODO: np.equal.outer
+        
         result = np.zeros((len(all_labels), *segmentation.shape),
                           dtype=output_dtype if output_dtype is not None else np.uint8)
         # variant 1, fastest in my testing
