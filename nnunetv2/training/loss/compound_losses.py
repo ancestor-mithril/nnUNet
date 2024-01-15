@@ -52,8 +52,7 @@ class DC_and_CE_loss(nn.Module):
         ce_loss = self.ce(net_output, target[:, 0]) \
             if self.weight_ce != 0 and (self.ignore_label is None or num_fg > 0) else 0
 
-        result = self.weight_ce * ce_loss + self.weight_dice * dc_loss
-        return result
+        return self.weight_ce * ce_loss + self.weight_dice * dc_loss
 
 
 class DC_and_BCE_loss(nn.Module):
@@ -131,11 +130,10 @@ class DC_and_topk_loss(nn.Module):
         if self.ignore_label is not None:
             assert target.shape[1] == 1, 'ignore label is not implemented for one hot encoded target variables ' \
                                          '(DC_and_CE_loss)'
-            mask = (target != self.ignore_label).bool()
+            mask = (target != self.ignore_label)
             # remove ignore label from target, replace with one of the known labels. It doesn't matter because we
             # ignore gradients in those areas anyway
-            target_dice = torch.clone(target)
-            target_dice[~mask] = 0  # TODO: Check. Use Index select or torch.where
+            target_dice = torch.where(mask, target, 0)
             num_fg = mask.sum()
         else:
             target_dice = target

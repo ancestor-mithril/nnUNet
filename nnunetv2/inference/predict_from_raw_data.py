@@ -530,9 +530,9 @@ class nnUNetPredictor(object):
             # second iteration to crash due to OOM. Grabbing tha twith try except cause way more bloated code than
             # this actually saves computation time
             if prediction is None:
-                prediction = self.predict_sliding_window_return_logits(data).to('cpu')
+                prediction = self.predict_sliding_window_return_logits(data).cpu()
             else:
-                prediction += self.predict_sliding_window_return_logits(data).to('cpu')
+                prediction += self.predict_sliding_window_return_logits(data).cpu()
 
         if len(self.list_of_parameters) > 1:
             prediction /= len(self.list_of_parameters)
