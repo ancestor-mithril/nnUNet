@@ -203,13 +203,13 @@ def resample_data_or_seg(data: np.ndarray, new_shape: Union[Tuple[float, ...], L
                         reshaped_final_data.append(reshaped[None])
                 else:
                     reshaped_final_data.append(reshaped_data[None])
-            reshaped_final_data = np.vstack(reshaped_final_data, dtype=dtype_data)
+            reshaped_final_data = np.vstack(reshaped_final_data, dtype=dtype_data, casting='unsafe')
         else:
             # print("no separate z, order", order)
             reshaped = []
             for c in range(data.shape[0]):
                 reshaped.append(resize_fn(data[c], new_shape, order, **kwargs)[None])
-            reshaped_final_data = np.vstack(reshaped, dtype=dtype_data)
+            reshaped_final_data = np.vstack(reshaped, dtype=dtype_data, casting='unsafe')
         return reshaped_final_data
     else:
         # print("no resampling necessary")

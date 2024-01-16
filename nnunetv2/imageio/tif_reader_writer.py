@@ -68,7 +68,7 @@ class Tiff3DIO(BaseReaderWriter):
             print(image_fnames)
             raise RuntimeError()
 
-        return np.vstack(images, dtype=np.float32), {'spacing': spacing}
+        return np.vstack(images, dtype=np.float32, casting='unsafe'), {'spacing': spacing}
 
     def write_seg(self, seg: np.ndarray, output_fname: str, properties: dict) -> None:
         # not ideal but I really have no clue how to set spacing/resolution information properly in tif files haha
