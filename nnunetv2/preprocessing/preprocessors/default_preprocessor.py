@@ -43,11 +43,8 @@ class DefaultPreprocessor(object):
     def run_case_npy(self, data: np.ndarray, seg: Union[np.ndarray, None], properties: dict,
                      plans_manager: PlansManager, configuration_manager: ConfigurationManager,
                      dataset_json: Union[dict, str]):
-        # let's not mess up the inputs!
-        data = np.copy(data)
         if seg is not None:
             assert data.shape[1:] == seg.shape[1:], "Shape mismatch between image and segmentation. Please fix your dataset and make use of the --verify_dataset_integrity flag to ensure everything is correct"
-            seg = np.copy(seg)
 
         has_seg = seg is not None
 
