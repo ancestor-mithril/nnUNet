@@ -61,7 +61,6 @@ class RemoveRandomConnectedComponentFromOneHotEncodingTransform(AbstractTransfor
             if np.random.uniform() < self.p_per_sample:
                 for c in self.channel_idx:
                     if np.random.uniform() < self.p_per_label:
-                        # print(np.unique(data[b, c])) ## should be [0, 1]
                         workon = data[b, c].astype(bool)
                         if not np.any(workon):
                             continue

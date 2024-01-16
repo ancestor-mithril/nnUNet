@@ -56,7 +56,7 @@ class NaturalImage2DIO(BaseReaderWriter):
             print('Image files:')
             print(image_fnames)
             raise RuntimeError()
-        return np.vstack(images).astype(np.float32, copy=False), {'spacing': (999, 1, 1)}
+        return np.vstack(images, dtype=np.float32), {'spacing': (999, 1, 1)}
 
     def read_seg(self, seg_fname: str) -> Tuple[np.ndarray, dict]:
         return self.read_images((seg_fname, ))
