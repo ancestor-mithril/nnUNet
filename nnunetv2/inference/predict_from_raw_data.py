@@ -14,6 +14,8 @@ from batchgenerators.dataloading.multi_threaded_augmenter import MultiThreadedAu
 from batchgenerators.utilities.file_and_folder_operations import load_json, join, isfile, maybe_mkdir_p, isdir, subdirs, \
     save_json
 from torch import nn
+from torch.nn import Identity
+from torch.utils.data import DataLoader
 
 if torch.__version__.startswith('1'):
     class OptimizedModule:
@@ -597,7 +599,7 @@ class nnUNetPredictor(object):
                                                        slicers,
                                                        do_on_device: bool = True,
                                                        ):
-        predicted_logits = n_predictions = prediction = gaussian = workon = None
+        n_predictions = gaussian = None
         results_device = self.device if do_on_device else torch.device('cpu')
 
         try:
@@ -614,24 +616,31 @@ class nnUNetPredictor(object):
             predicted_logits = torch.zeros((self.label_manager.num_segmentation_heads, *data.shape[1:]),
                                            dtype=torch.half,
                                            device=results_device)
-            n_predictions = torch.zeros(data.shape[1:], dtype=torch.half, device=results_device)
             if self.use_gaussian:
+                n_predictions = torch.zeros(data.shape[1:], dtype=torch.half, device=results_device)
                 gaussian = compute_gaussian(tuple(self.configuration_manager.patch_size), sigma_scale=1. / 8,
                                             value_scaling_factor=10,
                                             device=results_device)
 
-            if self.verbose: print('running prediction')
             if not self.allow_tqdm and self.verbose: print(f'{len(slicers)} steps')
-            for sl in tqdm(slicers, disable=not self.allow_tqdm):
-                workon = data[sl][None]
-                workon = workon.to(self.device, non_blocking=False)
+            loader = DataLoader(slicers, batch_size=int(os.getenv('nnUNet_batch_size', 1)), collate_fn=Identity())
+            for slicers in tqdm(loader, disable=not self.allow_tqdm):
+                workon = []
+                for sl in slicers:
+                    workon.append(data[sl])
+                workon = torch.stack(workon).to(self.device, non_blocking=True)
 
-                prediction = self._internal_maybe_mirror_and_predict(workon)[0].to(results_device)
+                prediction = self._internal_maybe_mirror_and_predict(workon).to(results_device)
 
-                predicted_logits[sl] += (prediction * gaussian if self.use_gaussian else prediction)
-                n_predictions[sl[1:]] += (gaussian if self.use_gaussian else 1)
+                if self.use_gaussian:
+                    prediction *= gaussian
+                for i, sl in enumerate(slicers):
+                    predicted_logits[sl] += prediction[i]
+                    if self.use_gaussian:
+                        n_predictions[sl[1:]] += gaussian
 
-            predicted_logits /= n_predictions
+            if self.use_gaussian:
+                predicted_logits /= n_predictions
             # check for infs
             if torch.any(torch.isinf(predicted_logits)):
                 raise RuntimeError('Encountered inf in predicted array. Aborting... If this problem persists, '
