@@ -544,7 +544,6 @@ class nnUNetPredictor(object):
         return prediction
 
     def _internal_get_sliding_window_slicers(self, image_size: Tuple[int, ...]):
-        # TODO: time
         slicers = []
         if len(self.configuration_manager.patch_size) < len(image_size):
             assert len(self.configuration_manager.patch_size) == len(
@@ -617,17 +616,19 @@ class nnUNetPredictor(object):
 
         if self.use_gaussian:
             n_predictions = torch.zeros(data.shape[1:], dtype=torch.half, device=results_device)
-            gaussian = compute_gaussian(tuple(self.configuration_manager.patch_size), sigma_scale=1. / 8,
+            gaussian = compute_gaussian(self.configuration_manager.patch_size, sigma_scale=1. / 8,
                                         value_scaling_factor=10,
                                         device=results_device)
 
         if not self.allow_tqdm and self.verbose:
             print(f'running prediction: {len(slicers)} steps')
+
         for sl in tqdm(slicers, disable=not self.allow_tqdm):
             workon = data[sl][None]
             workon = workon.to(self.device, non_blocking=True)
 
             prediction = self._internal_maybe_mirror_and_predict(workon)[0].to(results_device)
+
             if self.use_gaussian:
                 prediction *= gaussian
                 n_predictions[sl[1:]] += gaussian
@@ -641,6 +642,7 @@ class nnUNetPredictor(object):
             raise RuntimeError('Encountered inf in predicted array. Aborting... If this problem persists, '
                                'reduce value_scaling_factor in compute_gaussian or increase the dtype of '
                                'predicted_logits to fp32')
+
         return predicted_logits
 
     def predict_sliding_window_return_logits(self, input_image: torch.Tensor) \

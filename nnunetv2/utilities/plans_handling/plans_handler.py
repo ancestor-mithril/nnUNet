@@ -18,7 +18,6 @@ from nnunetv2.imageio.reader_writer_registry import recursive_find_reader_writer
 from nnunetv2.utilities.find_class_by_name import recursive_find_python_class
 from nnunetv2.utilities.label_handling.label_handling import get_labelmanager_class_from_plans
 
-
 # see https://adamj.eu/tech/2021/05/13/python-type-hints-how-to-fix-circular-imports/
 from typing import TYPE_CHECKING
 
@@ -31,6 +30,11 @@ if TYPE_CHECKING:
 
 class ConfigurationManager(object):
     def __init__(self, configuration_dict: dict):
+        # Preferring tuples
+        for key, value in configuration_dict.items():
+            if isinstance(value, list):
+                configuration_dict[key] = tuple(value)
+
         self.configuration = configuration_dict
 
     def __repr__(self):
@@ -56,23 +60,23 @@ class ConfigurationManager(object):
         return self.configuration['batch_size']
 
     @cached_property
-    def patch_size(self) -> List[int]:
+    def patch_size(self) -> Tuple[int, ...]:
         return self.configuration['patch_size']
 
     @cached_property
-    def median_image_size_in_voxels(self) -> List[int]:
+    def median_image_size_in_voxels(self) -> Tuple[int, ...]:
         return self.configuration['median_image_size_in_voxels']
 
     @cached_property
-    def spacing(self) -> List[float]:
+    def spacing(self) -> Tuple[float, ...]:
         return self.configuration['spacing']
 
     @cached_property
-    def normalization_schemes(self) -> List[str]:
+    def normalization_schemes(self) -> Tuple[str, ...]:
         return self.configuration['normalization_schemes']
 
     @cached_property
-    def use_mask_for_norm(self) -> List[bool]:
+    def use_mask_for_norm(self) -> Tuple[bool, ...]:
         return self.configuration['use_mask_for_norm']
 
     @cached_property
@@ -96,23 +100,23 @@ class ConfigurationManager(object):
         return self.configuration['UNet_base_num_features']
 
     @cached_property
-    def n_conv_per_stage_encoder(self) -> List[int]:
+    def n_conv_per_stage_encoder(self) -> Tuple[int]:
         return self.configuration['n_conv_per_stage_encoder']
 
     @cached_property
-    def n_conv_per_stage_decoder(self) -> List[int]:
+    def n_conv_per_stage_decoder(self) -> Tuple[int]:
         return self.configuration['n_conv_per_stage_decoder']
 
     @cached_property
-    def num_pool_per_axis(self) -> List[int]:
+    def num_pool_per_axis(self) -> Tuple[int]:
         return self.configuration['num_pool_per_axis']
 
     @cached_property
-    def pool_op_kernel_sizes(self) -> List[List[int]]:
+    def pool_op_kernel_sizes(self) -> Tuple[List[int]]:
         return self.configuration['pool_op_kernel_sizes']
 
     @cached_property
-    def conv_kernel_sizes(self) -> List[List[int]]:
+    def conv_kernel_sizes(self) -> Tuple[List[int]]:
         return self.configuration['conv_kernel_sizes']
 
     @cached_property
@@ -160,7 +164,7 @@ class ConfigurationManager(object):
         return self.configuration['batch_dice']
 
     @cached_property
-    def next_stage_names(self) -> Union[List[str], None]:
+    def next_stage_names(self) -> Union[Tuple[str], None]:
         ret = self.configuration.get('next_stage')
         if ret is not None:
             if isinstance(ret, str):
@@ -213,7 +217,7 @@ class PlansManager(object):
             configuration = base_config
         return configuration
 
-    @lru_cache(maxsize=10)
+    @lru_cache(maxsize=None)
     def get_configuration(self, configuration_name: str):
         if configuration_name not in self.plans['configurations'].keys():
             raise RuntimeError(f"Requested configuration {configuration_name} not found in plans. "
@@ -231,11 +235,11 @@ class PlansManager(object):
         return self.plans['plans_name']
 
     @cached_property
-    def original_median_spacing_after_transp(self) -> List[float]:
+    def original_median_spacing_after_transp(self) -> Tuple[float]:
         return self.plans['original_median_spacing_after_transp']
 
     @cached_property
-    def original_median_shape_after_transp(self) -> List[float]:
+    def original_median_shape_after_transp(self) -> Tuple[float]:
         return self.plans['original_median_shape_after_transp']
 
     @cached_property
@@ -243,16 +247,16 @@ class PlansManager(object):
         return recursive_find_reader_writer_by_name(self.plans['image_reader_writer'])
 
     @cached_property
-    def transpose_forward(self) -> List[int]:
+    def transpose_forward(self) -> Tuple[int]:
         return self.plans['transpose_forward']
 
     @cached_property
-    def transpose_backward(self) -> List[int]:
+    def transpose_backward(self) -> Tuple[int]:
         return self.plans['transpose_backward']
 
     @cached_property
-    def available_configurations(self) -> List[str]:
-        return list(self.plans['configurations'].keys())
+    def available_configurations(self) -> Tuple[str]:
+        return tuple(self.plans['configurations'].keys())
 
     @cached_property
     def experiment_planner_class(self) -> Type[ExperimentPlanner]:

@@ -25,7 +25,7 @@ def convert_predicted_logits_to_segmentation_with_correct_shape(predicted_logits
     current_spacing = configuration_manager.spacing if \
         len(configuration_manager.spacing) == \
         len(properties_dict['shape_after_cropping_and_before_resampling']) else \
-        [properties_dict['spacing'][0], *configuration_manager.spacing]
+        (properties_dict['spacing'][0], *configuration_manager.spacing)
     predicted_logits = configuration_manager.resampling_fn_probabilities(predicted_logits,
                                             properties_dict['shape_after_cropping_and_before_resampling'],
                                             current_spacing,
@@ -129,10 +129,10 @@ def resample_and_save(predicted: Union[torch.Tensor, np.ndarray], target_shape: 
     # resample to original shape
     current_spacing = configuration_manager.spacing if \
         len(configuration_manager.spacing) == len(properties_dict['shape_after_cropping_and_before_resampling']) else \
-        [properties_dict['spacing'][0], *configuration_manager.spacing]
+        (properties_dict['spacing'][0], *configuration_manager.spacing)
     target_spacing = configuration_manager.spacing if len(configuration_manager.spacing) == \
         len(properties_dict['shape_after_cropping_and_before_resampling']) else \
-        [properties_dict['spacing'][0], *configuration_manager.spacing]
+        (properties_dict['spacing'][0], *configuration_manager.spacing)
     predicted_array_or_file = configuration_manager.resampling_fn_probabilities(predicted,
                                                                                 target_shape,
                                                                                 current_spacing,
