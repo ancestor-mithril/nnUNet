@@ -134,7 +134,6 @@ def resample_data_or_seg(data: np.ndarray, new_shape: Union[Tuple[float, ...], L
     :param order_z: only applies if do_separate_z is True
     :return:
     """
-    # TODO: Try torchvision resize.
     assert data.ndim == 4, "data must be (c, x, y, z)"
     assert len(new_shape) == data.ndim - 1
 
@@ -146,11 +145,10 @@ def resample_data_or_seg(data: np.ndarray, new_shape: Union[Tuple[float, ...], L
         kwargs = {'mode': 'edge', 'anti_aliasing': False}
     dtype_data = data.dtype
     shape = data[0].shape
-    new_shape = np.asarray(new_shape)
-    if not np.array_equal(shape, new_shape):
-        data = data.astype(float, copy=False)
+    if shape != tuple(new_shape):
+        data = data.astype(np.float64, copy=False)
+        print(data.dtype)
         if do_separate_z:
-            # print("separate z, order in z is", order_z, "order inplane is", order)
             assert len(axis) == 1, "only one anisotropic axis supported"
             axis = axis[0]
             if axis == 0:
@@ -205,7 +203,6 @@ def resample_data_or_seg(data: np.ndarray, new_shape: Union[Tuple[float, ...], L
                     reshaped_final_data.append(reshaped_data[None])
             reshaped_final_data = np.vstack(reshaped_final_data, dtype=dtype_data, casting='unsafe')
         else:
-            # print("no separate z, order", order)
             reshaped = []
             for c in range(data.shape[0]):
                 reshaped.append(resize_fn(data[c], new_shape, order, **kwargs)[None])

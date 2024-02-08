@@ -137,9 +137,6 @@ class LabelManager(object):
 
         with torch.inference_mode():
             # softmax etc is not implemented for half
-            # TODO: We can use bfloat16, check whether it's ok.
-            # TODO: Use GPU?
-            # TODO: Time this function to check how much it takes on CPU
             probabilities = self.inference_nonlin(logits.float())
 
         return probabilities
