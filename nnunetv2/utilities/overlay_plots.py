@@ -91,7 +91,7 @@ def generate_overlay(input_image: np.ndarray, segmentation: np.ndarray, mapping:
 
     # rescale result to [0, 255]
     image = image / image.max() * 255
-    return image.astype(np.uint8)
+    return image.astype(np.uint8, copy=False)
 
 
 def select_slice_to_plot(image: np.ndarray, segmentation: np.ndarray) -> int:

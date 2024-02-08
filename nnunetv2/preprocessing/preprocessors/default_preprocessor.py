@@ -107,9 +107,9 @@ class DefaultPreprocessor(object):
                                                                                    verbose=self.verbose)
             seg = self.modify_seg_fn(seg, plans_manager, dataset_json, configuration_manager)
         if np.max(seg) > 127:
-            seg = seg.astype(np.int16)
+            seg = seg.astype(np.int16, copy=False)
         else:
-            seg = seg.astype(np.int8)
+            seg = seg.astype(np.int8, copy=False)
         return data, seg
 
     def run_case(self, image_files: List[str], seg_file: Union[str, None], plans_manager: PlansManager,

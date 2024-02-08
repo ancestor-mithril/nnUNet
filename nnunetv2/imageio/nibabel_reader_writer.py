@@ -85,14 +85,14 @@ class NibabelIO(BaseReaderWriter):
             },
             'spacing': spacings_for_nnunet[0]
         }
-        return stacked_images.astype(np.float32), dict
+        return stacked_images.astype(np.float32, copy=False), dict
 
     def read_seg(self, seg_fname: str) -> Tuple[np.ndarray, dict]:
         return self.read_images((seg_fname, ))
 
     def write_seg(self, seg: np.ndarray, output_fname: str, properties: dict) -> None:
         # revert transpose
-        seg = seg.transpose((2, 1, 0)).astype(np.uint8)
+        seg = seg.transpose((2, 1, 0)).astype(np.uint8, copy=False)
         seg_nib = nibabel.Nifti1Image(seg, affine=properties['nibabel_stuff']['original_affine'])
         nibabel.save(seg_nib, output_fname)
 
@@ -168,14 +168,14 @@ class NibabelIOWithReorient(BaseReaderWriter):
             },
             'spacing': spacings_for_nnunet[0]
         }
-        return stacked_images.astype(np.float32), dict
+        return stacked_images.astype(np.float32, copy=False), dict
 
     def read_seg(self, seg_fname: str) -> Tuple[np.ndarray, dict]:
         return self.read_images((seg_fname, ))
 
     def write_seg(self, seg: np.ndarray, output_fname: str, properties: dict) -> None:
         # revert transpose
-        seg = seg.transpose((2, 1, 0)).astype(np.uint8)
+        seg = seg.transpose((2, 1, 0)).astype(np.uint8, copy=False)
 
         seg_nib = nibabel.Nifti1Image(seg, affine=properties['nibabel_stuff']['reoriented_affine'])
         seg_nib_reoriented = seg_nib.as_reoriented(io_orientation(properties['nibabel_stuff']['original_affine']))

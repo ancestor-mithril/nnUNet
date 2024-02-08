@@ -149,7 +149,7 @@ def resample_data_or_seg(data: np.ndarray, new_shape: Union[Tuple[float, ...], L
     shape = np.array(data[0].shape)
     new_shape = np.array(new_shape)
     if np.any(shape != new_shape):
-        data = data.astype(float)
+        data = data.astype(np.float64, copy=False)
         if do_separate_z:
             # print("separate z, order in z is", order_z, "order inplane is", order)
             assert len(axis) == 1, "only one anisotropic axis supported"
@@ -210,7 +210,7 @@ def resample_data_or_seg(data: np.ndarray, new_shape: Union[Tuple[float, ...], L
             for c in range(data.shape[0]):
                 reshaped.append(resize_fn(data[c], new_shape, order, **kwargs)[None])
             reshaped_final_data = np.vstack(reshaped)
-        return reshaped_final_data.astype(dtype_data)
+        return reshaped_final_data.astype(dtype_data, copy=False)
     else:
         # print("no resampling necessary")
         return data

@@ -62,11 +62,11 @@ class RemoveRandomConnectedComponentFromOneHotEncodingTransform(AbstractTransfor
                 for c in self.channel_idx:
                     if np.random.uniform() < self.p_per_label:
                         # print(np.unique(data[b, c])) ## should be [0, 1]
-                        workon = data[b, c].astype(bool)
+                        workon = data[b, c].astype(bool, copy=False)
                         if not np.any(workon):
                             continue
                         num_voxels = np.prod(workon.shape, dtype=np.uint64)
-                        lab, component_sizes = label_with_component_sizes(workon.astype(bool))
+                        lab, component_sizes = label_with_component_sizes(workon.astype(bool, copy=False))
                         if len(component_sizes) > 0:
                             valid_component_ids = [i for i, j in component_sizes.items() if j <
                                                    num_voxels*self.dont_do_if_covers_more_than_x_percent]
@@ -117,11 +117,11 @@ class ApplyRandomBinaryOperatorTransform(AbstractTransform):
                     if np.random.uniform() < self.p_per_label:
                         operation = np.random.choice(self.any_of_these)
                         selem = ball(np.random.uniform(*self.strel_size))
-                        workon = data_dict[self.key][b, c].astype(bool)
+                        workon = data_dict[self.key][b, c].astype(bool, copy=False)
                         if not np.any(workon):
                             continue
                         # print(np.unique(workon))
-                        res = operation(workon, selem).astype(data_dict[self.key].dtype)
+                        res = operation(workon, selem).astype(data_dict[self.key].dtype, copy=False)
                         # print('ApplyRandomBinaryOperatorTransform', c, operation, np.sum(workon), np.sum(res))
                         data_dict[self.key][b, c] = res
 

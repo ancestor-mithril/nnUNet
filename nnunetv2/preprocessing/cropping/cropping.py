@@ -42,7 +42,7 @@ def crop_to_nonzero(data, seg=None, nonzero_label=-1):
     if seg is not None:
         seg[(seg == 0) & (~nonzero_mask)] = nonzero_label
     else:
-        nonzero_mask = nonzero_mask.astype(np.int8)
+        nonzero_mask = nonzero_mask.astype(np.int8, copy=False)
         nonzero_mask[nonzero_mask == 0] = nonzero_label
         nonzero_mask[nonzero_mask > 0] = 0
         seg = nonzero_mask

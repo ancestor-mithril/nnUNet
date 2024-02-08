@@ -23,7 +23,7 @@ def pad_shape(shape, must_be_divisible_by):
     for i in range(len(shape)):
         if shape[i] % must_be_divisible_by[i] == 0:
             new_shp[i] -= must_be_divisible_by[i]
-    new_shp = np.array(new_shp).astype(int)
+    new_shp = np.array(new_shp).astype(int, copy=False)
     return new_shp
 
 
