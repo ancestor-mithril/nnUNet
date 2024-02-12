@@ -122,6 +122,7 @@ class ExperimentPlanner(object):
         determine_resampling is called within get_plans_for_configuration to allow for different functions for each
         configuration
         """
+        # TODO: Implement no resampling argument
         resampling_data = resample_data_or_seg_to_shape
         resampling_data_kwargs = {
             "is_seg": False,

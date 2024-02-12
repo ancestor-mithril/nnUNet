@@ -18,7 +18,6 @@ from nnunetv2.imageio.reader_writer_registry import recursive_find_reader_writer
 from nnunetv2.utilities.find_class_by_name import recursive_find_python_class
 from nnunetv2.utilities.label_handling.label_handling import get_labelmanager_class_from_plans
 
-
 # see https://adamj.eu/tech/2021/05/13/python-type-hints-how-to-fix-circular-imports/
 from typing import TYPE_CHECKING
 
@@ -195,7 +194,8 @@ class PlansManager(object):
         return self.plans.__repr__()
 
     def _internal_resolve_configuration_inheritance(self, configuration_name: str,
-                                                    visited: Tuple[str, ...] = None) -> dict:
+                                                    visited: Tuple[str, ...] = None,
+                                                    disable_resampling: int = 0) -> dict:
         if configuration_name not in self.plans['configurations'].keys():
             raise ValueError(f'The configuration {configuration_name} does not exist in the plans I have. Valid '
                              f'configuration names are {list(self.plans["configurations"].keys())}.')
@@ -213,18 +213,28 @@ class PlansManager(object):
                                        f"is {parent_config_name}.")
                 visited = (*visited, configuration_name)
 
-            base_config = self._internal_resolve_configuration_inheritance(parent_config_name, visited)
+            base_config = self._internal_resolve_configuration_inheritance(parent_config_name, visited,
+                                                                           disable_resampling)
             base_config.update(configuration)
             configuration = base_config
+        if disable_resampling > 0:
+            configuration["resampling_fn_probabilities"] = "no_resampling"
+            configuration["resampling_fn_probabilities_kwargs"] = {}
+            if disable_resampling > 1:
+                configuration["resampling_fn_data"] = "no_resampling"
+                configuration["resampling_fn_seg"] = "no_resampling"
+                configuration["resampling_fn_data_kwargs"] = {}
+                configuration["resampling_fn_seg_kwargs"] = {}
         return configuration
 
     @lru_cache(maxsize=10)
-    def get_configuration(self, configuration_name: str):
+    def get_configuration(self, configuration_name: str, disable_resampling: int = 0):
         if configuration_name not in self.plans['configurations'].keys():
             raise RuntimeError(f"Requested configuration {configuration_name} not found in plans. "
                                f"Available configurations: {list(self.plans['configurations'].keys())}")
 
-        configuration_dict = self._internal_resolve_configuration_inheritance(configuration_name)
+        configuration_dict = self._internal_resolve_configuration_inheritance(configuration_name,
+                                                                              disable_resampling=disable_resampling)
         return ConfigurationManager(configuration_dict)
 
     @property

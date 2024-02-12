@@ -2,7 +2,6 @@ import inspect
 import itertools
 import multiprocessing
 import os
-import traceback
 from copy import deepcopy
 from time import sleep
 from typing import Tuple, Union, List, Optional
@@ -57,7 +56,7 @@ class nnUNetPredictor(object):
         self.allow_tqdm = allow_tqdm
 
         self.plans_manager, self.configuration_manager, self.list_of_parameters, self.network, self.dataset_json, \
-        self.trainer_name, self.allowed_mirroring_axes, self.label_manager = None, None, None, None, None, None, None, None
+            self.trainer_name, self.allowed_mirroring_axes, self.label_manager = None, None, None, None, None, None, None, None
 
         self.tile_step_size = tile_step_size
         self.use_gaussian = use_gaussian
@@ -72,7 +71,8 @@ class nnUNetPredictor(object):
 
     def initialize_from_trained_model_folder(self, model_training_output_dir: str,
                                              use_folds: Union[Tuple[Union[int, str]], None],
-                                             checkpoint_name: str = 'checkpoint_final.pth'):
+                                             checkpoint_name: str = 'checkpoint_final.pth',
+                                             disable_resampling_for_inference: int = 0):
         """
         This is used when making predictions with a trained model
         """
@@ -99,7 +99,8 @@ class nnUNetPredictor(object):
 
             parameters.append(checkpoint['network_weights'])
 
-        configuration_manager = plans_manager.get_configuration(configuration_name)
+        configuration_manager = plans_manager.get_configuration(configuration_name,
+                                                                disable_resampling=disable_resampling_for_inference)
         # restore network
         num_input_channels = determine_num_input_channels(plans_manager, configuration_manager, dataset_json)
         trainer_class = recursive_find_python_class(join(nnunetv2.__path__[0], "training", "nnUNetTrainer"),
@@ -136,7 +137,7 @@ class nnUNetPredictor(object):
         self.label_manager = plans_manager.get_label_manager(dataset_json)
         allow_compile = True
         allow_compile = allow_compile and ('nnUNet_compile' in os.environ.keys()) and (
-                    os.environ['nnUNet_compile'].lower() in ('true', '1', 't'))
+                os.environ['nnUNet_compile'].lower() in ('true', '1', 't'))
         allow_compile = allow_compile and not isinstance(self.network, OptimizedModule)
         if isinstance(self.network, DistributedDataParallel):
             allow_compile = allow_compile and isinstance(self.network.module, OptimizedModule)
@@ -336,9 +337,9 @@ class nnUNetPredictor(object):
     def get_data_iterator_from_raw_npy_data(self,
                                             image_or_list_of_images: Union[np.ndarray, List[np.ndarray]],
                                             segs_from_prev_stage_or_list_of_segs_from_prev_stage: Union[None,
-                                                                                                        np.ndarray,
-                                                                                                        List[
-                                                                                                            np.ndarray]],
+                                            np.ndarray,
+                                            List[
+                                                np.ndarray]],
                                             properties_or_list_of_properties: Union[dict, List[dict]],
                                             truncated_ofname: Union[str, List[str], None],
                                             num_processes: int = 3):
@@ -375,9 +376,9 @@ class nnUNetPredictor(object):
     def predict_from_list_of_npy_arrays(self,
                                         image_or_list_of_images: Union[np.ndarray, List[np.ndarray]],
                                         segs_from_prev_stage_or_list_of_segs_from_prev_stage: Union[None,
-                                                                                                    np.ndarray,
-                                                                                                    List[
-                                                                                                        np.ndarray]],
+                                        np.ndarray,
+                                        List[
+                                            np.ndarray]],
                                         properties_or_list_of_properties: Union[dict, List[dict]],
                                         truncated_ofname: Union[str, List[str], None],
                                         num_processes: int = 3,
@@ -859,6 +860,9 @@ def predict_entry_point():
     parser.add_argument('--disable_progress_bar', action='store_true', required=False, default=False,
                         help='Set this flag to disable progress bar. Recommended for HPC environments (non interactive '
                              'jobs)')
+    parser.add_argument('-disable_resampling', type=int, required=False, default=0,
+                        help='Use 0 to keep the resampling defined in the plans file. Use 1 to disable probabilities '
+                             'resampling and use 2 to disable both input data and probabilities resampling.')
 
     print(
         "\n#######################################################################\nPlease cite the following paper "
@@ -904,7 +908,8 @@ def predict_entry_point():
     predictor.initialize_from_trained_model_folder(
         model_folder,
         args.f,
-        checkpoint_name=args.chk
+        checkpoint_name=args.chk,
+        disable_resampling_for_inference=args.disable_resampling
     )
     predictor.predict_from_files(args.i, args.o, save_probabilities=args.save_probabilities,
                                  overwrite=not args.continue_prediction,
