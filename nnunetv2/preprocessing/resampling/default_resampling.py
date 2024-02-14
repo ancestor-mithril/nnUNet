@@ -147,7 +147,6 @@ def resample_data_or_seg(data: np.ndarray, new_shape: Union[Tuple[float, ...], L
     shape = data[0].shape
     if shape != tuple(new_shape):
         data = data.astype(np.float64, copy=False)
-        print(data.dtype)
         if do_separate_z:
             assert len(axis) == 1, "only one anisotropic axis supported"
             axis = axis[0]
