@@ -27,6 +27,19 @@ def compute_new_shape(old_shape: Union[Tuple[int, ...], List[int], np.ndarray],
     return np.rint((old_spacing / new_spacing * old_shape)).astype(int)  # exception if sizes are not the same
 
 
+def no_resampling(data: Union[torch.Tensor, np.ndarray],
+                  new_shape: Union[Tuple[int, ...], List[int], np.ndarray],
+                  current_spacing: Union[Tuple[float, ...], List[float], np.ndarray],
+                  new_spacing: Union[Tuple[float, ...], List[float], np.ndarray],
+                  is_seg: bool = False,
+                  order: int = 3, order_z: int = 0,
+                  force_separate_z: Union[bool, None] = False,
+                  separate_z_anisotropy_threshold: float = ANISO_THRESHOLD):
+    if isinstance(data, torch.Tensor):
+        data = data.cpu().numpy()
+    return data
+
+
 def resample_data_or_seg_to_spacing(data: np.ndarray,
                                     current_spacing: Union[Tuple[float, ...], List[float], np.ndarray],
                                     new_spacing: Union[Tuple[float, ...], List[float], np.ndarray],
