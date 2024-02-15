@@ -1,4 +1,5 @@
 import gc
+import os
 from collections import OrderedDict
 from typing import Union, Tuple, List, Sequence
 
@@ -98,6 +99,9 @@ def resample_data_or_seg_to_shape(data: Union[torch.Tensor, np.ndarray],
     """
     needed for segmentation export. Stupid, I know. Maybe we can fix that with Leos new resampling functions
     """
+    if os.getenv('nnUNet_no_resampling', '') in ('true', '1', 't'):
+        return no_resampling(data, new_shape, current_spacing, new_spacing, is_seg, order, order_z, force_separate_z,
+                             separate_z_anisotropy_threshold)
     current_spacing = np.asarray(current_spacing)
     new_spacing = np.asarray(new_spacing)
     if isinstance(data, torch.Tensor):
