@@ -80,35 +80,30 @@ class nnUNetDataset(object):
 
     def load_case(self, key):
         entry = self[key]
-        if 'open_data_file' in entry.keys():
-            data = entry['open_data_file']
-            # print('using open data file')
-        elif isfile(entry['data_file'][:-4] + ".npy"):
-            data = np.load(entry['data_file'][:-4] + ".npy", 'r')
+        data = entry.get('open_data_file')
+        seg = entry.get('open_seg_file')
+
+        if data is None or seg is None:
+            data_file_npy = entry['data_file'][:-4]
+            if not isfile(data_file_npy + ".npy") or not isfile(data_file_npy + "_seg.npy"):
+                data_seg = np.load(entry['data_file'])
+                data = data_seg['data']
+                seg = data_seg['seg']
+            else:
+                data = np.load(data_file + ".npy", 'r')
+                seg = np.load(data_file + "_seg.npy", 'r')
+    
             if self.keep_files_open:
                 self.dataset[key]['open_data_file'] = data
-                # print('saving open data file')
-        else:
-            data = np.load(entry['data_file'])['data']
-
-        if 'open_seg_file' in entry.keys():
-            seg = entry['open_seg_file']
-            # print('using open data file')
-        elif isfile(entry['data_file'][:-4] + "_seg.npy"):
-            seg = np.load(entry['data_file'][:-4] + "_seg.npy", 'r')
-            if self.keep_files_open:
                 self.dataset[key]['open_seg_file'] = seg
-                # print('saving open seg file')
-        else:
-            seg = np.load(entry['data_file'])['seg']
 
-        if 'seg_from_prev_stage_file' in entry.keys():
+        if 'seg_from_prev_stage_file' in entry:
             if isfile(entry['seg_from_prev_stage_file'][:-4] + ".npy"):
                 seg_prev = np.load(entry['seg_from_prev_stage_file'][:-4] + ".npy", 'r')
             else:
                 seg_prev = np.load(entry['seg_from_prev_stage_file'])['seg']
             seg = np.vstack((seg, seg_prev[None]))
-
+        
         return data, seg, entry['properties']
 
 
