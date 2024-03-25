@@ -270,6 +270,32 @@ class nnUNetPredictor(object):
 
         return self.predict_from_data_iterator(data_iterator, save_probabilities, num_processes_segmentation_export)
 
+    def _load_data_for_prediction(self, input_file, input_seg, properties, preprocessor, plans_manager, configuration_manager, dataset_json, label_manager):
+        if properties is not None:
+            data, seg = preprocessor.run_case_npy(
+                input_file, 
+                input_seg, 
+                properties,
+                plans_manager,
+                configuration_manager,
+                dataset_json)
+        else:
+            data, seg, properties = preprocessor.run_case(
+                input_file,
+                input_seg,
+                plans_manager,
+                configuration_manager,
+                dataset_json)
+        
+        if input_seg is not None:
+            seg_onehot = convert_labelmap_to_one_hot(input_seg[0], label_manager.foreground_labels, data.dtype)
+            data = np.vstack((data, seg_onehot))
+
+        data = torch.from_numpy(data).to(dtype=torch.float32, memory_format=torch.contiguous_format)
+        if self.device.type == 'cuda':
+            data = data.pin_memory()
+        return data, properties
+
     @torch.inference_mode()
     def _sequential_prediction(self, input_list_of_lists, seg_from_prev_stage_files,
                                output_filename_truncated, save_probabilities):
@@ -278,8 +304,6 @@ class nnUNetPredictor(object):
         preprocessor = configuration_manager.preprocessor_class(verbose=self.verbose_preprocessing)
         plans_manager = self.plans_manager
         dataset_json = self.dataset_json
-        if isinstance(dataset_json, str):
-            dataset_json = load_json(dataset_json)
         label_manager = plans_manager.get_label_manager(dataset_json)
 
         for i in range(len(input_list_of_lists)):
@@ -289,20 +313,11 @@ class nnUNetPredictor(object):
             else:
                 print(f'\nPredicting image of shape {data.shape}:')
 
-            data, seg, properties = preprocessor.run_case(
-                input_list_of_lists[i],
-                seg_from_prev_stage_files[i] if seg_from_prev_stage_files is not None else None,
-                plans_manager,
-                configuration_manager,
-                dataset_json)
-            if seg_from_prev_stage_files is not None and seg_from_prev_stage_files[i] is not None:
-                seg_onehot = convert_labelmap_to_one_hot(seg[0], label_manager.foreground_labels, data.dtype)
-                data = np.vstack((data, seg_onehot))
-
-            data = torch.from_numpy(data).to(dtype=torch.float32, memory_format=torch.contiguous_format)
-            if self.device.type == 'cuda':
-                data = data.pin_memory()
-
+            data, properties = self._load_data_for_prediction(input_list_of_lists[i], 
+                                                              seg_from_prev_stage_files[i] if seg_from_prev_stage_files is not None else None,
+                                                              None,
+                                                              preprocessor, plans_manager, configuration_manager, dataset_json, label_manager)
+            
             prediction = self.predict_logits_from_preprocessed_data(data)
 
             if ofile is not None:
@@ -490,32 +505,26 @@ class nnUNetPredictor(object):
         """
         image_properties must only have a 'spacing' key!
         """
-        ppa = PreprocessAdapterFromNpy([input_image], [segmentation_previous_stage], [image_properties],
-                                       [output_file_truncated],
-                                       self.plans_manager, self.dataset_json, self.configuration_manager,
-                                       num_threads_in_multithreaded=1, verbose=self.verbose)
-        if self.verbose:
-            print('preprocessing')
-        dct = next(ppa)
-
-        if self.verbose:
-            print('predicting')
-        data = dct['data']
-        if self.device.type == 'cuda':
-            data = data.pin_memory()
+        data, properties = self._load_data_for_prediction(input_image, segmentation_previous_stage, image_properties,
+                                                          self.configuration_manager.preprocessor_class(verbose=verbose),
+                                                          self.plans_manager,
+                                                          self.configuration_manager,
+                                                          self.dataset_json,
+                                                          self.plans_manager.get_label_manager(self.dataset_json))
+        
         predicted_logits = self.predict_logits_from_preprocessed_data(data)
 
         if self.verbose:
             print('resampling to original shape')
         if output_file_truncated is not None:
-            export_prediction_from_logits(predicted_logits, dct['data_properties'], self.configuration_manager,
+            export_prediction_from_logits(predicted_logits, properties, self.configuration_manager,
                                           self.plans_manager, self.dataset_json, output_file_truncated,
                                           save_or_return_probabilities)
         else:
             return convert_predicted_logits_to_segmentation_with_correct_shape(predicted_logits, self.plans_manager,
                                                                               self.configuration_manager,
                                                                               self.label_manager,
-                                                                              dct['data_properties'],
+                                                                              properties,
                                                                               return_probabilities=
                                                                               save_or_return_probabilities)
 
