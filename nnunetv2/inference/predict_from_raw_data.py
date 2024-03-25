@@ -506,7 +506,7 @@ class nnUNetPredictor(object):
         image_properties must only have a 'spacing' key!
         """
         data, properties = self._load_data_for_prediction(input_image, segmentation_previous_stage, image_properties,
-                                                          self.configuration_manager.preprocessor_class(verbose=verbose),
+                                                          self.configuration_manager.preprocessor_class(verbose=self.verbose_preprocessing),
                                                           self.plans_manager,
                                                           self.configuration_manager,
                                                           self.dataset_json,
