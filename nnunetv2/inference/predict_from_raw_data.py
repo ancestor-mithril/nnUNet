@@ -115,6 +115,13 @@ class nnUNetPredictor(object):
                 and not isinstance(self.network, OptimizedModule):
             print('Using torch.compile')
             self.network = torch.compile(self.network)
+        
+        if len(self.list_of_parameters) == 1:
+            # Load the weights only once
+            if not isinstance(self.network, OptimizedModule):
+                self.network.load_state_dict(params)
+            else:
+                self.network._orig_mod.load_state_dict(params)
 
     def manual_initialization(self, network: nn.Module, plans_manager: PlansManager,
                               configuration_manager: ConfigurationManager, parameters: Optional[List[dict]],
@@ -140,6 +147,13 @@ class nnUNetPredictor(object):
         if allow_compile:
             print('Using torch.compile')
             self.network = torch.compile(self.network)
+
+        if len(self.list_of_parameters) == 1:
+            # Load the weights only once
+            if not isinstance(self.network, OptimizedModule):
+                self.network.load_state_dict(params)
+            else:
+                self.network._orig_mod.load_state_dict(params)
 
     @staticmethod
     def auto_detect_available_folds(model_training_output_dir, checkpoint_name):
@@ -515,26 +529,26 @@ class nnUNetPredictor(object):
         """
         n_threads = torch.get_num_threads()
         torch.set_num_threads(default_num_processes if default_num_processes < n_threads else n_threads)
-        prediction = None
-
-        for params in self.list_of_parameters:
-
-            # messing with state dict names...
-            if not isinstance(self.network, OptimizedModule):
-                self.network.load_state_dict(params)
-            else:
-                self.network._orig_mod.load_state_dict(params)
-
-            # why not leave prediction on device if perform_everything_on_device? Because this may cause the
-            # second iteration to crash due to OOM. Grabbing tha twith try except cause way more bloated code than
-            # this actually saves computation time
-            if prediction is None:
-                prediction = self.predict_sliding_window_return_logits(data).cpu()
-            else:
-                prediction += self.predict_sliding_window_return_logits(data).cpu()
 
         if len(self.list_of_parameters) > 1:
+            prediction = None
+            for params in self.list_of_parameters:
+                if not isinstance(self.network, OptimizedModule):
+                    self.network.load_state_dict(params)
+                else:
+                    self.network._orig_mod.load_state_dict(params)
+    
+                # why not leave prediction on device if perform_everything_on_device? Because this may cause the
+                # second iteration to crash due to OOM. Grabbing tha twith try except cause way more bloated code than
+                # this actually saves computation time
+                if prediction is None:
+                    prediction = self.predict_sliding_window_return_logits(data).cpu()
+                else:
+                    prediction += self.predict_sliding_window_return_logits(data).cpu()
             prediction /= len(self.list_of_parameters)
+        else:
+            # Optimized path
+            prediction = self.predict_sliding_window_return_logits(data).cpu()
 
         if self.verbose:
             print('Prediction done')
