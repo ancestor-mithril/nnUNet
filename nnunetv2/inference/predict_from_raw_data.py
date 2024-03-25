@@ -119,9 +119,9 @@ class nnUNetPredictor(object):
         if len(self.list_of_parameters) == 1:
             # Load the weights only once
             if not isinstance(self.network, OptimizedModule):
-                self.network.load_state_dict(params)
+                self.network.load_state_dict(self.list_of_parameters[0])
             else:
-                self.network._orig_mod.load_state_dict(params)
+                self.network._orig_mod.load_state_dict(self.list_of_parameters[0])
 
     def manual_initialization(self, network: nn.Module, plans_manager: PlansManager,
                               configuration_manager: ConfigurationManager, parameters: Optional[List[dict]],
