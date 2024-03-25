@@ -468,6 +468,7 @@ class nnUNetPredictor(object):
         empty_cache(self.device)
         return ret
 
+    @torch.inference_mode()
     def predict_single_npy_array(self, input_image: np.ndarray, image_properties: dict,
                                  segmentation_previous_stage: np.ndarray = None,
                                  output_file_truncated: str = None,
@@ -485,7 +486,10 @@ class nnUNetPredictor(object):
 
         if self.verbose:
             print('predicting')
-        predicted_logits = self.predict_logits_from_preprocessed_data(dct['data'])
+        data = dct['data']
+        if self.device.type == 'cuda':
+            data = data.pin_memory()
+        predicted_logits = self.predict_logits_from_preprocessed_data(data)
 
         if self.verbose:
             print('resampling to original shape')
@@ -494,16 +498,12 @@ class nnUNetPredictor(object):
                                           self.plans_manager, self.dataset_json, output_file_truncated,
                                           save_or_return_probabilities)
         else:
-            ret = convert_predicted_logits_to_segmentation_with_correct_shape(predicted_logits, self.plans_manager,
+            return convert_predicted_logits_to_segmentation_with_correct_shape(predicted_logits, self.plans_manager,
                                                                               self.configuration_manager,
                                                                               self.label_manager,
                                                                               dct['data_properties'],
                                                                               return_probabilities=
                                                                               save_or_return_probabilities)
-            if save_or_return_probabilities:
-                return ret[0], ret[1]
-            else:
-                return ret
 
     def predict_logits_from_preprocessed_data(self, data: torch.Tensor) -> torch.Tensor:
         """
