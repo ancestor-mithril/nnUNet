@@ -30,8 +30,6 @@ def resample_torch_simple(
             raise RuntimeError
     else:
         torch_mode = mode
-    if os.getenv('nn_resampling_nn', '0') == 1:
-        torch_mode = 'nearest'
 
     if isinstance(new_shape, np.ndarray):
         new_shape = [int(i) for i in new_shape]
@@ -51,8 +49,7 @@ def resample_torch_simple(
                 orig_device = deepcopy(data.device)
                 data = data.to(device)
 
-            if os.getenv('nn_resample_device', '0') == '1':
-                device = torch.device('cuda')
+            device = torch.device(os.getenv('nn_resample_device', 'cpu'))
             dtype = torch.float32
             if 'nn_resample_dtype' in os.environ:
                 if os.environ['nn_resample_dtype'] == 'float16':

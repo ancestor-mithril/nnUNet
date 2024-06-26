@@ -10,6 +10,7 @@ from batchgenerators.utilities.file_and_folder_operations import load_json, isfi
 from nnunetv2.configuration import default_num_processes
 from nnunetv2.utilities.label_handling.label_handling import LabelManager
 from nnunetv2.utilities.plans_handling.plans_handler import PlansManager, ConfigurationManager
+from torch.nn import functional as F
 
 
 def convert_predicted_logits_to_segmentation_with_correct_shape(predicted_logits: Union[torch.Tensor, np.ndarray],
@@ -41,14 +42,12 @@ def convert_predicted_logits_to_segmentation_with_correct_shape(predicted_logits
         del predicted_logits
         segmentation = label_manager.convert_probabilities_to_segmentation(predicted_probabilities)
     else:
-        predicted_probabilities = label_manager.apply_inference_nonlin(predicted_logits)
-        del predicted_logits
-        segmentation = label_manager.convert_probabilities_to_segmentation(predicted_probabilities)
-        segmentation = configuration_manager.resampling_fn_probabilities(segmentation,
-                                                                         properties_dict['shape_after_cropping_and_before_resampling'],
-                                                                         current_spacing,
-                                                                         [properties_dict['spacing'][i] for i in
-                                                                          plans_manager.transpose_forward])
+        device = torch.device(os.getenv('nn_resample_device', 'cpu'))
+        predicted_logits = predicted_logits.to(device=device)
+        predicted_logits = label_manager.apply_inference_nonlin(predicted_logits)
+        segmentation = label_manager.convert_probabilities_to_segmentation(predicted_logits).to(torch.int16)
+        segmentation = F.interpolate(segmentation, properties_dict['shape_after_cropping_and_before_resampling'],
+                                     mode='nearest', antialias=False)[0]
 
     # segmentation may be torch.Tensor but we continue with numpy
     if isinstance(segmentation, torch.Tensor):
