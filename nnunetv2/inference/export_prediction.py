@@ -48,7 +48,7 @@ def convert_predicted_logits_to_segmentation_with_correct_shape(predicted_logits
         segmentation = label_manager.convert_probabilities_to_segmentation(predicted_logits)
         segmentation = segmentation[None, None].to(dtype=torch.bfloat16)
         segmentation = F.interpolate(segmentation, properties_dict['shape_after_cropping_and_before_resampling'],
-                                     mode='nearest-exact', antialias=False)[0, 0]
+                                     mode='nearest-exact', antialias=False)[0, 0].to(torch.int16)
 
     # segmentation may be torch.Tensor but we continue with numpy
     if isinstance(segmentation, torch.Tensor):
