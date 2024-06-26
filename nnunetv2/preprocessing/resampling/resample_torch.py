@@ -1,3 +1,4 @@
+import os
 from copy import deepcopy
 from typing import Union, Tuple, List
 
@@ -48,6 +49,19 @@ def resample_torch_simple(
                 orig_device = deepcopy(data.device)
                 data = data.to(device)
 
+            if os.getenv('nn_resample_device', '0') == '1':
+                device = torch.device('cuda')
+            dtype = torch.float32
+            if 'nn_resample_dtype' in os.environ:
+                if os.environ['nn_resample_dtype'] == 'float16':
+                    if device.type != 'cuda':
+                        print('half not implemented for cpu')
+                    dtype = torch.float16
+                elif os.environ['nn_resample_dtype'] == 'float16':
+                    dtype = torch.bfloat16
+            if os.getenv('nn_resample_ram', '0') == '1':
+                memefficient_seg_resampling = True
+
             if is_seg:
                 unique_values = torch.unique(data)
                 result_dtype = torch.int8 if max(unique_values) < 127 else torch.int16
@@ -63,14 +77,14 @@ def resample_torch_simple(
                     #     result[i] = F.interpolate((data[None] == u).float() * 1000, new_shape, mode='trilinear', antialias=False)[0]
                     # result = unique_values[result.argmax(0)]
 
-                    result_tmp = torch.zeros((len(unique_values), data.shape[0], *new_shape), dtype=torch.float16,
+                    result_tmp = torch.zeros((len(unique_values), data.shape[0], *new_shape), dtype=dtype,
                                              device=device)
                     scale_factor = 1000
                     done_mask = torch.zeros_like(result, dtype=torch.bool, device=device)
                     for i, u in enumerate(unique_values):
                         result_tmp[i] = \
-                            F.interpolate((data[None] == u).float() * scale_factor, new_shape, mode=torch_mode,
-                                          antialias=False)[0]
+                            F.interpolate((data[None] == u).to(dtype=dtype, device=device) * scale_factor, new_shape,
+                                          mode=torch_mode, antialias=False)[0]
                         mask = result_tmp[i] > (0.7 * scale_factor)
                         result[mask] = u.item()
                         done_mask |= mask
@@ -81,10 +95,11 @@ def resample_torch_simple(
                     for i, u in enumerate(unique_values):
                         if u == 0:
                             pass
-                        result[F.interpolate((data[None] == u).float(), new_shape, mode=torch_mode, antialias=False)[
-                                   0] > 0.5] = u
+                        result[F.interpolate((data[None] == u).to(dtype=dtype, device=device), new_shape,
+                                             mode=torch_mode, antialias=False)[0] > 0.5] = u
             else:
-                result = F.interpolate(data[None].float(), new_shape, mode=torch_mode, antialias=False)[0]
+                result = F.interpolate(data[None].to(dtype=dtype, device=device), new_shape, mode=torch_mode,
+                                       antialias=False)[0]
             if input_was_numpy:
                 result = result.cpu().numpy()
             else:
