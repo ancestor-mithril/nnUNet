@@ -28,15 +28,27 @@ def convert_predicted_logits_to_segmentation_with_correct_shape(predicted_logits
         len(configuration_manager.spacing) == \
         len(properties_dict['shape_after_cropping_and_before_resampling']) else \
         [spacing_transposed[0], *configuration_manager.spacing]
-    predicted_logits = configuration_manager.resampling_fn_probabilities(predicted_logits,
-                                            properties_dict['shape_after_cropping_and_before_resampling'],
-                                            current_spacing,
-                                            [properties_dict['spacing'][i] for i in plans_manager.transpose_forward])
-    # return value of resampling_fn_probabilities can be ndarray or Tensor but that does not matter because
-    # apply_inference_nonlin will convert to torch
-    predicted_probabilities = label_manager.apply_inference_nonlin(predicted_logits)
-    del predicted_logits
-    segmentation = label_manager.convert_probabilities_to_segmentation(predicted_probabilities)
+
+    if os.getenv('nn_resampling_nn', '0') != '1':
+        predicted_logits = configuration_manager.resampling_fn_probabilities(predicted_logits,
+                                                                             properties_dict['shape_after_cropping_and_before_resampling'],
+                                                                             current_spacing,
+                                                                             [properties_dict['spacing'][i] for i in
+                                                                              plans_manager.transpose_forward])
+        # return value of resampling_fn_probabilities can be ndarray or Tensor but that does not matter because
+        # apply_inference_nonlin will convert to torch
+        predicted_probabilities = label_manager.apply_inference_nonlin(predicted_logits)
+        del predicted_logits
+        segmentation = label_manager.convert_probabilities_to_segmentation(predicted_probabilities)
+    else:
+        predicted_probabilities = label_manager.apply_inference_nonlin(predicted_logits)
+        del predicted_logits
+        segmentation = label_manager.convert_probabilities_to_segmentation(predicted_probabilities)
+        segmentation = configuration_manager.resampling_fn_probabilities(segmentation,
+                                                                         properties_dict['shape_after_cropping_and_before_resampling'],
+                                                                         current_spacing,
+                                                                         [properties_dict['spacing'][i] for i in
+                                                                          plans_manager.transpose_forward])
 
     # segmentation may be torch.Tensor but we continue with numpy
     if isinstance(segmentation, torch.Tensor):
@@ -44,7 +56,8 @@ def convert_predicted_logits_to_segmentation_with_correct_shape(predicted_logits
 
     # put segmentation in bbox (revert cropping)
     segmentation_reverted_cropping = np.zeros(properties_dict['shape_before_cropping'],
-                                              dtype=np.uint8 if len(label_manager.foreground_labels) < 255 else np.uint16)
+                                              dtype=np.uint8 if len(
+                                                  label_manager.foreground_labels) < 255 else np.uint16)
     slicer = bounding_box_to_slice(properties_dict['bbox_used_for_cropping'])
     segmentation_reverted_cropping[slicer] = segmentation
     del segmentation
@@ -130,7 +143,8 @@ def resample_and_save(predicted: Union[torch.Tensor, np.ndarray], target_shape: 
         len(configuration_manager.spacing) == len(properties_dict['shape_after_cropping_and_before_resampling']) else \
         [spacing_transposed[0], *configuration_manager.spacing]
     target_spacing = configuration_manager.spacing if len(configuration_manager.spacing) == \
-        len(properties_dict['shape_after_cropping_and_before_resampling']) else \
+                                                      len(properties_dict[
+                                                              'shape_after_cropping_and_before_resampling']) else \
         [spacing_transposed[0], *configuration_manager.spacing]
     predicted_array_or_file = configuration_manager.resampling_fn_probabilities(predicted,
                                                                                 target_shape,

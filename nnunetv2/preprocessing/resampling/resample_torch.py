@@ -30,6 +30,8 @@ def resample_torch_simple(
             raise RuntimeError
     else:
         torch_mode = mode
+    if os.getenv('nn_resampling_nn', '0') == 1:
+        torch_mode = 'nearest'
 
     if isinstance(new_shape, np.ndarray):
         new_shape = [int(i) for i in new_shape]
