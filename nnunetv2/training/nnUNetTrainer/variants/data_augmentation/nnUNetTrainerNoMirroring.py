@@ -1,6 +1,7 @@
 from typing import Union, Tuple, List
 
 import numpy as np
+import torch
 from batchgeneratorsv2.helpers.scalar_type import RandomScalar
 from batchgeneratorsv2.transforms.base.basic_transform import BasicTransform
 from batchgeneratorsv2.transforms.intensity.brightness import MultiplicativeBrightnessTransform
@@ -34,17 +35,25 @@ class nnUNetTrainerNoMirroring(nnUNetTrainer):
         return rotation_for_DA, do_dummy_2d_data_aug, initial_patch_size, mirror_axes
 
 
+class nnUNetTrainerNoMirroring_2000epochs(nnUNetTrainerNoMirroring):
+    def __init__(self, plans: dict, configuration: str, fold: int, dataset_json: dict, unpack_dataset: bool = True,
+                 device: torch.device = torch.device('cuda')):
+        super().__init__(plans, configuration, fold, dataset_json, unpack_dataset, device)
+        self.num_epochs = 2000
+
+
 class nnUNetTrainer_onlyMirror01(nnUNetTrainer):
     """
     Only mirrors along spatial axes 0 and 1 for 3D and 0 for 2D
     """
+
     def configure_rotation_dummyDA_mirroring_and_inital_patch_size(self):
         rotation_for_DA, do_dummy_2d_data_aug, initial_patch_size, mirror_axes = \
             super().configure_rotation_dummyDA_mirroring_and_inital_patch_size()
         patch_size = self.configuration_manager.patch_size
         dim = len(patch_size)
         if dim == 2:
-            mirror_axes = (0, )
+            mirror_axes = (0,)
         else:
             mirror_axes = (0, 1)
         self.inference_allowed_mirroring_axes = mirror_axes
