@@ -60,6 +60,13 @@ class nnUNetTrainer_onlyMirror01(nnUNetTrainer):
         return rotation_for_DA, do_dummy_2d_data_aug, initial_patch_size, mirror_axes
 
 
+class nnUNetTrainer_onlyMirror01_1500ep(nnUNetTrainer_onlyMirror01):
+    def __init__(self, plans: dict, configuration: str, fold: int, dataset_json: dict, unpack_dataset: bool = True,
+                 device: torch.device = torch.device('cuda')):
+        super().__init__(plans, configuration, fold, dataset_json, unpack_dataset, device)
+        self.num_epochs = 1500
+
+
 class nnUNetTrainer_onlyMirror01_DASegOrd0(nnUNetTrainer_onlyMirror01):
     @staticmethod
     def get_training_transforms(
