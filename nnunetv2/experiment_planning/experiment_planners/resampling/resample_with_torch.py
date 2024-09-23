@@ -9,7 +9,7 @@ from nnunetv2.preprocessing.resampling.resample_torch import resample_torch_forn
 
 class nnUNetPlannerResEncM_torchres(nnUNetPlannerResEncM):
     def __init__(self, dataset_name_or_id: Union[str, int],
-                 gpu_memory_target_in_gb: float = 24,
+                 gpu_memory_target_in_gb: float = 8,
                  preprocessor_name: str = 'DefaultPreprocessor', plans_name: str = 'nnUNetResEncUNetMPlans_torchres',
                  overwrite_target_spacing: Union[List[float], Tuple[float, ...]] = None,
                  suppress_transpose: bool = False):
