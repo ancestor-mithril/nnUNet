@@ -1,3 +1,4 @@
+import os
 from functools import lru_cache
 
 import numpy as np
@@ -11,6 +12,28 @@ from scipy.ndimage import gaussian_filter
 def compute_gaussian(tile_size: Union[Tuple[int, ...], List[int]], sigma_scale: float = 1. / 8,
                      value_scaling_factor: float = 1, dtype=torch.float16, device=torch.device('cuda', 0)) \
         -> torch.Tensor:
+    if os.getenv("USE_GAUSSIAN", "0") == "0":
+        print("Using Hanning")
+        # 1D Hanning window for each dimension
+        windows_1d = [np.hanning(sz) for sz in tile_size]
+
+        # Create multi-dimensional Hanning map via meshgrid
+        grids = np.meshgrid(*windows_1d, indexing='ij')
+        hanning_map = np.prod(grids, axis=0)
+
+        # Scale max value for numerical stability
+        hanning_map /= (np.max(hanning_map) / value_scaling_factor)
+
+        # Convert to torch tensor
+        hanning_map = torch.from_numpy(hanning_map).to(device=device, dtype=dtype)
+
+        # Avoid zeros (important to prevent NaNs during division)
+        mask = hanning_map == 0
+        if mask.any():
+            hanning_map[mask] = torch.min(hanning_map[~mask])
+        print("Finished building Hanning")
+        return hanning_map
+    print("Using Gaussian")
     tmp = np.zeros(tile_size)
     center_coords = [i // 2 for i in tile_size]
     sigmas = [i * sigma_scale for i in tile_size]

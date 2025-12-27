@@ -56,3 +56,38 @@ class nnUNetTrainerAdam3en4(nnUNetTrainerAdam):
                  device: torch.device = torch.device('cuda')):
         super().__init__(plans, configuration, fold, dataset_json, device)
         self.initial_lr = 3e-4
+
+
+class nnUNetTrainerMuon(nnUNetTrainerAdam):
+    def configure_optimizers(self):
+        from timm.optim.muon import Muon
+
+        optimizer = Muon(self.network.parameters(),
+                          lr=self.initial_lr,
+                          weight_decay=self.weight_decay)
+        lr_scheduler = PolyLRScheduler(optimizer, self.initial_lr, self.num_epochs)
+        return optimizer, lr_scheduler
+
+class nnUNetTrainerMuonNesterov(nnUNetTrainerAdam):
+    def configure_optimizers(self):
+        from timm.optim.muon import Muon
+
+        optimizer = Muon(self.network.parameters(),
+                          lr=self.initial_lr,
+                          weight_decay=self.weight_decay,
+                         nesterov=True)
+        lr_scheduler = PolyLRScheduler(optimizer, self.initial_lr, self.num_epochs)
+        return optimizer, lr_scheduler
+
+class nnUNetTrainerMuon3en4(nnUNetTrainerMuon):
+    def __init__(self, plans: dict, configuration: str, fold: int, dataset_json: dict,
+                 device: torch.device = torch.device('cuda')):
+        super().__init__(plans, configuration, fold, dataset_json, device)
+        self.initial_lr = 3e-4
+
+
+class nnUNetTrainerMuonNesterov3en4(nnUNetTrainerMuonNesterov):
+    def __init__(self, plans: dict, configuration: str, fold: int, dataset_json: dict,
+                 device: torch.device = torch.device('cuda')):
+        super().__init__(plans, configuration, fold, dataset_json, device)
+        self.initial_lr = 3e-4
