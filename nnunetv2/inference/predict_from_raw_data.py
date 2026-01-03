@@ -14,6 +14,7 @@ from acvl_utils.cropping_and_padding.padding import pad_nd_image
 from batchgenerators.dataloading.multi_threaded_augmenter import MultiThreadedAugmenter
 from batchgenerators.utilities.file_and_folder_operations import load_json, join, isfile, maybe_mkdir_p, isdir, subdirs, \
     save_json
+from timed_decorator.simple_timed import timed
 from torch import nn
 from torch._dynamo import OptimizedModule
 from torch.nn.parallel import DistributedDataParallel
@@ -34,6 +35,33 @@ from nnunetv2.utilities.json_export import recursive_fix_for_json_export
 from nnunetv2.utilities.label_handling.label_handling import determine_num_input_channels
 from nnunetv2.utilities.plans_handling.plans_handler import PlansManager, ConfigurationManager
 from nnunetv2.utilities.utils import create_lists_from_splitted_dataset_folder
+import time
+import inspect
+
+
+timer_data = dict()
+
+class Timer:
+    def __init__(self, name):
+        self.verbose = False
+        self.name = name
+
+    def __enter__(self):
+        frame = inspect.currentframe().f_back
+        self.filename = frame.f_code.co_filename
+        self.lineno = frame.f_lineno
+        self.start = time.time()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        elapsed = time.time() - self.start
+        key = f"{self.name} ({self.filename}:{self.lineno})"
+        if self.verbose:
+            print(f"{key} took {elapsed:.6f}s")
+        global timer_data
+        if key not in timer_data:
+            timer_data[key] = 0
+        timer_data[key] += elapsed
 
 
 class nnUNetPredictor(object):
@@ -540,7 +568,8 @@ class nnUNetPredictor(object):
     @torch.inference_mode()
     def _internal_maybe_mirror_and_predict(self, x: torch.Tensor) -> torch.Tensor:
         mirror_axes = self.allowed_mirroring_axes if self.use_mirroring else None
-        prediction = self.network(x)
+        with Timer("forward"):
+            prediction = self.network(x)
 
         if mirror_axes is not None:
             # check for invalid numbers in mirror_axes
@@ -548,12 +577,14 @@ class nnUNetPredictor(object):
             assert max(mirror_axes) <= x.ndim - 3, 'mirror_axes does not match the dimension of the input!'
 
             mirror_axes = [m + 2 for m in mirror_axes]
-            axes_combinations = [
-                c for i in range(len(mirror_axes)) for c in itertools.combinations(mirror_axes, i + 1)
-            ]
-            for axes in axes_combinations:
-                prediction += torch.flip(self.network(torch.flip(x, axes)), axes)
-            prediction /= (len(axes_combinations) + 1)
+            if not hasattr(self, "axes_combinations"):
+                self.axes_combinations = [
+                    c for i in range(len(mirror_axes)) for c in itertools.combinations(mirror_axes, i + 1)
+                ]
+            with Timer("flip forward"):
+                for axes in self.axes_combinations:
+                    prediction += torch.flip(self.network(torch.flip(x, axes)), axes)
+            prediction /= (len(self.axes_combinations) + 1)
         return prediction
 
     @torch.inference_mode()
@@ -566,8 +597,19 @@ class nnUNetPredictor(object):
         results_device = self.device if do_on_device else torch.device('cpu')
 
         def producer(d, slh, q):
-            for s in slh:
-                q.put((torch.clone(d[s][None], memory_format=torch.contiguous_format).to(self.device), s))
+            bs = int(os.getenv("BATCH_SIZE", "1"))
+
+            for i in range(0, len(slh), bs):
+                batch_s = slh[i:i + bs]
+
+                with Timer("create_batch"):
+                    batch = torch.stack(
+                        [d[s] for s in batch_s]
+                    ).to(device=self.device)
+
+                q.put((batch, batch_s))
+            # for s in slh:
+            #     q.put((torch.clone(d[s][None], memory_format=torch.contiguous_format).to(self.device), s))
             q.put('end')
 
         try:
@@ -577,7 +619,7 @@ class nnUNetPredictor(object):
             if self.verbose:
                 print(f'move image to device {results_device}')
             data = data.to(results_device)
-            queue = Queue(maxsize=2)
+            queue = Queue(maxsize=1)
             t = Thread(target=producer, args=(data, slicers, queue))
             t.start()
 
@@ -601,20 +643,27 @@ class nnUNetPredictor(object):
 
             with tqdm(desc=None, total=len(slicers), disable=not self.allow_tqdm) as pbar:
                 while True:
-                    item = queue.get()
+                    with Timer("queue get"):
+                        item = queue.get()
                     if item == 'end':
                         queue.task_done()
                         break
-                    workon, sl = item
-                    prediction = self._internal_maybe_mirror_and_predict(workon)[0].to(results_device)
 
+                    workon, batch_sl = item
+                    with Timer("predict"):
+                        rez = self._internal_maybe_mirror_and_predict(workon).to(results_device)
                     if self.use_gaussian:
-                        prediction *= gaussian
-                    predicted_logits[sl] += prediction
-                    n_predictions[sl[1:]] += gaussian
+                        with Timer("gaussian"):
+                            rez *= gaussian
+                    for prediction, sl in zip(rez, batch_sl):
+                        with Timer("updating pred"):
+                            predicted_logits[sl] += prediction
+                            n_predictions[sl[1:]] += gaussian
+
                     queue.task_done()
-                    pbar.update()
+                    pbar.update(len(batch_sl))
             queue.join()
+            t.join()
 
             # predicted_logits /= n_predictions
             torch.div(predicted_logits, n_predictions, out=predicted_logits)
@@ -759,6 +808,10 @@ class nnUNetPredictor(object):
                      self.configuration_manager, self.label_manager,
                      data_properties,
                      save_probabilities))
+
+            for key, value in list(timer_data.items()):
+                del timer_data[key]
+                print(key, value)
 
         # clear lru cache
         compute_gaussian.cache_clear()
