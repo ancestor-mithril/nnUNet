@@ -1,3 +1,4 @@
+import gc
 import os
 from typing import Union, List
 
@@ -51,7 +52,9 @@ def convert_predicted_logits_to_segmentation_with_correct_shape(predicted_logits
         predicted_logits = predicted_logits.to(device=device)
         segmentation, predicted_probabilities = get_segmentation_and_probabilities(
             predicted_logits, label_manager, return_probabilities)
+        del predicted_logits
         segmentation = segmentation[None, None].to(dtype=torch.bfloat16)
+        gc.collect()
         segmentation = torch.nn.functional.interpolate(
             segmentation,
             properties_dict['shape_after_cropping_and_before_resampling'],
