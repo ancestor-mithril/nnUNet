@@ -672,7 +672,7 @@ class nnUNetPredictor(object):
             gc.collect()
             # check for infs
             print("Start inf")
-            if os.getenv("IGNORE_INF", "0") == "1" and torch.any(torch.isinf(predicted_logits)):
+            if os.getenv("IGNORE_INF", "0") == "0" and torch.any(torch.isinf(predicted_logits)):
                 raise RuntimeError('Encountered inf in predicted array. Aborting... If this problem persists, '
                                    'reduce value_scaling_factor in compute_gaussian or increase the dtype of '
                                    'predicted_logits to fp32')
