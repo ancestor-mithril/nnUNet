@@ -668,8 +668,10 @@ class nnUNetPredictor(object):
             gc.collect()
 
             # predicted_logits /= n_predictions
+            print("Start div")
             torch.div(predicted_logits, n_predictions, out=predicted_logits)
             # check for infs
+            print("Start inf")
             if torch.any(torch.isinf(predicted_logits)):
                 raise RuntimeError('Encountered inf in predicted array. Aborting... If this problem persists, '
                                    'reduce value_scaling_factor in compute_gaussian or increase the dtype of '
@@ -679,6 +681,7 @@ class nnUNetPredictor(object):
             empty_cache(self.device)
             empty_cache(results_device)
             raise e
+        print("end inf")
         return predicted_logits
 
     @torch.inference_mode()
@@ -727,7 +730,9 @@ class nnUNetPredictor(object):
             del data
             empty_cache(self.device)
             # revert padding
+            print("Reverting")
             predicted_logits = predicted_logits[(slice(None), *slicer_revert_padding[1:])]
+            print("Reverted")
         return predicted_logits
 
     def predict_from_files_sequential(self,
