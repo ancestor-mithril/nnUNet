@@ -1,3 +1,4 @@
+import gc
 import inspect
 import itertools
 import multiprocessing
@@ -664,6 +665,7 @@ class nnUNetPredictor(object):
                     pbar.update(len(batch_sl))
             queue.join()
             t.join()
+            gc.collect()
 
             # predicted_logits /= n_predictions
             torch.div(predicted_logits, n_predictions, out=predicted_logits)
@@ -722,7 +724,7 @@ class nnUNetPredictor(object):
             else:
                 predicted_logits = self._internal_predict_sliding_window_return_logits(data, slicers,
                                                                                        self.perform_everything_on_device)
-
+            del data
             empty_cache(self.device)
             # revert padding
             predicted_logits = predicted_logits[(slice(None), *slicer_revert_padding[1:])]
