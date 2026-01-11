@@ -670,6 +670,7 @@ class nnUNetPredictor(object):
             # predicted_logits /= n_predictions
             print("Start div")
             torch.div(predicted_logits, n_predictions, out=predicted_logits)
+            del n_predictions
             # check for infs
             print("Start inf")
             if torch.any(torch.isinf(predicted_logits)):
