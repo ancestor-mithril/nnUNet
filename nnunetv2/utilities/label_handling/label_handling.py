@@ -1,4 +1,6 @@
 from __future__ import annotations
+
+import os
 from time import time
 from typing import Union, List, Tuple, Type
 
@@ -178,7 +180,7 @@ class LabelManager(object):
             print("pre-allocating segmentation")
             segmentation = np.empty(predicted_probabilities.shape[1:], dtype=np.int8 if predicted_probabilities.shape[0] < 255 else np.int16)
             print("Start argmax for", predicted_probabilities.shape)
-            div_factor = 50
+            div_factor = int(os.getenv("sliding_softmax", "50"))
             for i in trange(int(predicted_probabilities.shape[1] / div_factor) + 1, desc="Argmax"):
                 predicted_probabilities[:, i * div_factor: (i + 1) * div_factor].argmax(
                     0, out=segmentation[i * div_factor: (i + 1) * div_factor])

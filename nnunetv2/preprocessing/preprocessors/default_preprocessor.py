@@ -13,6 +13,7 @@
 #    limitations under the License.
 import math
 import multiprocessing
+import os
 import shutil
 from time import sleep
 from typing import Tuple
@@ -46,7 +47,8 @@ class DefaultPreprocessor(object):
                      plans_manager: PlansManager, configuration_manager: ConfigurationManager,
                      dataset_json: Union[dict, str]):
         # let's not mess up the inputs!
-        data = data.astype(np.float32)  # this creates a copy
+        if os.getenv("copy_elision", "0") == "0":
+            data = data.astype(np.float32)  # this creates a copy
         if seg is not None:
             assert data.shape[1:] == seg.shape[1:], "Shape mismatch between image and segmentation. Please fix your dataset and make use of the --verify_dataset_integrity flag to ensure everything is correct"
             seg = np.copy(seg)
