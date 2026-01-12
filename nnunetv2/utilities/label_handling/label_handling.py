@@ -6,6 +6,7 @@ import numpy as np
 import torch
 from acvl_utils.cropping_and_padding.bounding_boxes import bounding_box_to_slice, insert_crop_into_image
 from batchgenerators.utilities.file_and_folder_operations import join
+from tqdm import trange
 
 import nnunetv2
 from nnunetv2.utilities.find_class_by_name import recursive_find_python_class
@@ -177,11 +178,11 @@ class LabelManager(object):
             print("pre-allocating segmentation")
             segmentation = np.empty(predicted_probabilities.shape[1:], dtype=np.int8 if predicted_probabilities.shape[0] < 255 else np.int16)
             print("Start argmax for", predicted_probabilities.shape)
-            predicted_probabilities.argmax(0, out=segmentation)
+            for i in trange(int(predicted_probabilities.shape[1] / 100) + 1, desc="Argmax"):
+                predicted_probabilities[:, i * 100: (i + 1) * 100].argmax(0, out=segmentation[i * 100: (i + 1) * 100])
             print("end argmax")
             if not is_numpy:
                 segmentation = torch.from_numpy(segmentation)
-
         return segmentation
 
     @torch.inference_mode()
