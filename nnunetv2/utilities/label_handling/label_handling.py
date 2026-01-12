@@ -178,8 +178,10 @@ class LabelManager(object):
             print("pre-allocating segmentation")
             segmentation = np.empty(predicted_probabilities.shape[1:], dtype=np.int8 if predicted_probabilities.shape[0] < 255 else np.int16)
             print("Start argmax for", predicted_probabilities.shape)
-            for i in trange(int(predicted_probabilities.shape[1] / 100) + 1, desc="Argmax"):
-                predicted_probabilities[:, i * 100: (i + 1) * 100].argmax(0, out=segmentation[i * 100: (i + 1) * 100])
+            div_factor = 50
+            for i in trange(int(predicted_probabilities.shape[1] / div_factor) + 1, desc="Argmax"):
+                predicted_probabilities[:, i * div_factor: (i + 1) * div_factor].argmax(
+                    0, out=segmentation[i * div_factor: (i + 1) * div_factor])
             print("end argmax")
             if not is_numpy:
                 segmentation = torch.from_numpy(segmentation)
