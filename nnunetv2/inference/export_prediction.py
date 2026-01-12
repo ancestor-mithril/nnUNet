@@ -50,17 +50,21 @@ def convert_predicted_logits_to_segmentation_with_correct_shape(predicted_logits
         print("Here")
         device = torch.device(os.getenv('nn_resample_device', 'cpu'))
         predicted_logits = predicted_logits.to(device=device)
+        print("get segmentation")
         segmentation, predicted_probabilities = get_segmentation_and_probabilities(
             predicted_logits, label_manager, return_probabilities)
         del predicted_logits
+        print("cast segmentation")
         segmentation = segmentation[None, None].to(dtype=torch.bfloat16)
         gc.collect()
+        print("Start interpolate")
         segmentation = torch.nn.functional.interpolate(
             segmentation,
             properties_dict['shape_after_cropping_and_before_resampling'],
             mode='nearest-exact',
             antialias=False
         )[0, 0].to(torch.int16).cpu()
+        print("End interpolate")
 
     # put segmentation in bbox (revert cropping)
     segmentation_reverted_cropping = np.zeros(properties_dict['shape_before_cropping'],
