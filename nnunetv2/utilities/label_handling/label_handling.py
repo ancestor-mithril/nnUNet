@@ -175,7 +175,7 @@ class LabelManager(object):
             if not is_numpy:
                 predicted_probabilities = predicted_probabilities.numpy()
             print("pre-allocating segmentation")
-            segmentation = np.empty(predicted_probabilities.shape[1:], dtype=np.int16)
+            segmentation = np.empty(predicted_probabilities.shape[1:], dtype=np.int8 if predicted_probabilities.shape[0] < 255 else np.int16)
             print("Start argmax for", predicted_probabilities.shape)
             predicted_probabilities.argmax(0, out=segmentation)
             print("end argmax")
