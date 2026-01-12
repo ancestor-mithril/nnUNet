@@ -51,6 +51,7 @@ def convert_predicted_logits_to_segmentation_with_correct_shape(predicted_logits
         device = torch.device(os.getenv('nn_resample_device', 'cpu'))
         predicted_logits = predicted_logits.to(device=device)
         print("get segmentation")
+        gc.collect()
         segmentation, predicted_probabilities = get_segmentation_and_probabilities(
             predicted_logits, label_manager, return_probabilities)
         del predicted_logits

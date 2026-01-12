@@ -530,6 +530,7 @@ class nnUNetPredictor(object):
 
         if self.verbose: print('Prediction done')
         torch.set_num_threads(n_threads)
+        del data
         return prediction
 
     def _internal_get_sliding_window_slicers(self, image_size: Tuple[int, ...]):
