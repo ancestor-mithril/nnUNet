@@ -137,7 +137,7 @@ def resample_data_or_seg(data: np.ndarray, new_shape: Union[Tuple[float, ...], L
     new_shape = np.array(new_shape)
     if dtype_out is None:
         dtype_out = data.dtype
-    reshaped_final = np.zeros((data.shape[0], *new_shape), dtype=dtype_out)
+    reshaped_final = np.empty((data.shape[0], *new_shape), dtype=dtype_out)
     if np.any(shape != new_shape):
         data = data.astype(float, copy=False)
         if do_separate_z:

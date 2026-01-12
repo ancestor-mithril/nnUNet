@@ -795,7 +795,7 @@ class nnUNetPredictor(object):
 
         ret = []
         for li, of, sps in zip(list_of_lists_or_source_folder, output_filename_truncated, seg_from_prev_stage_files):
-            data, seg, data_properties = preprocessor.run_case(
+            data, _, data_properties = preprocessor.run_case(
                 li,
                 sps,
                 self.plans_manager,
@@ -806,6 +806,8 @@ class nnUNetPredictor(object):
             print(f'perform_everything_on_device: {self.perform_everything_on_device}')
 
             prediction = self.predict_logits_from_preprocessed_data(torch.from_numpy(data)).cpu()
+            del data
+            gc.collect()
 
             if of is not None:
                 export_prediction_from_logits(prediction, data_properties, self.configuration_manager, self.plans_manager,
