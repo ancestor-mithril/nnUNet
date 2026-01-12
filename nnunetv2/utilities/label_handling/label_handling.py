@@ -174,7 +174,11 @@ class LabelManager(object):
             is_numpy = isinstance(predicted_probabilities, np.ndarray)
             if not is_numpy:
                 predicted_probabilities = predicted_probabilities.numpy()
-            segmentation = predicted_probabilities.argmax(0)
+            print("pre-allocating segmentation")
+            segmentation = np.empty(predicted_probabilities.shape[1:], dtype=np.int16)
+            print("Start argmax for", predicted_probabilities.shape)
+            predicted_probabilities.argmax(0, out=segmentation)
+            print("end argmax")
             if not is_numpy:
                 segmentation = torch.from_numpy(segmentation)
 
