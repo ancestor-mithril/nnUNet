@@ -15,11 +15,13 @@ def compute_gaussian(tile_size: Union[Tuple[int, ...], List[int]], sigma_scale: 
     if os.getenv("USE_GAUSSIAN", "0") == "0":
         print("Using Hanning")
         # 1D Hanning window for each dimension
-        windows_1d = [np.hanning(sz) for sz in tile_size]
+        windows_1d = [np.hanning(sz).astype(np.float16) for sz in tile_size]
 
         # Create multi-dimensional Hanning map via meshgrid
         grids = np.meshgrid(*windows_1d, indexing='ij')
+        del windows_1d
         hanning_map = np.prod(grids, axis=0)
+        del grids
 
         # Scale max value for numerical stability
         hanning_map /= (np.max(hanning_map) / value_scaling_factor)
@@ -32,6 +34,7 @@ def compute_gaussian(tile_size: Union[Tuple[int, ...], List[int]], sigma_scale: 
         if mask.any():
             hanning_map[mask] = torch.min(hanning_map[~mask])
         print("Finished building Hanning")
+        del mask
         return hanning_map
     print("Using Gaussian")
     tmp = np.zeros(tile_size)
