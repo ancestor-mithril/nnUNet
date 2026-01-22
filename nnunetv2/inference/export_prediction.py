@@ -72,7 +72,6 @@ def convert_predicted_logits_to_segmentation_with_correct_shape(predicted_logits
             antialias=False
         )[0, 0].to(torch.int16).cpu()
         perf_logger.info("End interpolate")
-        exit()
 
     # put segmentation in bbox (revert cropping)
     segmentation_reverted_cropping = np.zeros(properties_dict['shape_before_cropping'],
