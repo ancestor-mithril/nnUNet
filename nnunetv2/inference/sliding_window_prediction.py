@@ -14,9 +14,9 @@ from nnunetv2.utilities.logging import perf_logger
 def compute_gaussian(tile_size: Union[Tuple[int, ...], List[int]], sigma_scale: float = 1. / 8,
                      value_scaling_factor: float = 1, dtype=torch.float16, device=torch.device('cuda', 0)) \
         -> torch.Tensor:
-    use_gaussian = os.getenv("USE_GAUSSIAN", "0") == "0"
+    use_gaussian = os.getenv("USE_GAUSSIAN", "0") == "1"
     print("Using gaussian" if use_gaussian else "Using hanning")
-    if os.getenv("USE_GAUSSIAN", "0") == "0":
+    if not use_gaussian:
         # 1D Hanning window for each dimension
         windows_1d = [np.hanning(sz).astype(np.float16) for sz in tile_size]
 
