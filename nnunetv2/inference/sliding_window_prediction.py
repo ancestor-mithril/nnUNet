@@ -7,13 +7,16 @@ from typing import Union, Tuple, List
 from acvl_utils.cropping_and_padding.padding import pad_nd_image
 from scipy.ndimage import gaussian_filter
 
+from nnunetv2.utilities.logging import perf_logger
+
 
 @lru_cache(maxsize=0 if os.getenv("NO_HEATMAP_CACHE", "0") == "1" else None)
 def compute_gaussian(tile_size: Union[Tuple[int, ...], List[int]], sigma_scale: float = 1. / 8,
                      value_scaling_factor: float = 1, dtype=torch.float16, device=torch.device('cuda', 0)) \
         -> torch.Tensor:
+    use_gaussian = os.getenv("USE_GAUSSIAN", "0") == "0"
+    print("Using gaussian" if use_gaussian else "Using hanning")
     if os.getenv("USE_GAUSSIAN", "0") == "0":
-        print("Using Hanning")
         # 1D Hanning window for each dimension
         windows_1d = [np.hanning(sz).astype(np.float16) for sz in tile_size]
 
@@ -33,10 +36,9 @@ def compute_gaussian(tile_size: Union[Tuple[int, ...], List[int]], sigma_scale: 
         mask = hanning_map == 0
         if mask.any():
             hanning_map[mask] = torch.min(hanning_map[~mask])
-        print("Finished building Hanning")
+        perf_logger.info(f"Finished building Hanning {hanning_map.shape}")
         del mask
         return hanning_map
-    print("Using Gaussian")
     tmp = np.zeros(tile_size)
     center_coords = [i // 2 for i in tile_size]
     sigmas = [i * sigma_scale for i in tile_size]

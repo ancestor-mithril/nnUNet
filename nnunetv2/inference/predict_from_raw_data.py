@@ -34,6 +34,7 @@ from nnunetv2.utilities.find_class_by_name import recursive_find_python_class
 from nnunetv2.utilities.helpers import empty_cache, dummy_context
 from nnunetv2.utilities.json_export import recursive_fix_for_json_export
 from nnunetv2.utilities.label_handling.label_handling import determine_num_input_channels
+from nnunetv2.utilities.logging import perf_logger
 from nnunetv2.utilities.plans_handling.plans_handler import PlansManager, ConfigurationManager
 from nnunetv2.utilities.utils import create_lists_from_splitted_dataset_folder
 import time
@@ -667,13 +668,13 @@ class nnUNetPredictor(object):
             queue.join()
             t.join()
             # predicted_logits /= n_predictions
-            print("Start div")
             torch.div(predicted_logits, n_predictions, out=predicted_logits)
             del queue, t, n_predictions
             gc.collect()
             # check for infs
-            print("Start inf")
-            if os.getenv("IGNORE_INF", "0") == "0" and torch.any(torch.isinf(predicted_logits)):
+            check_for_inf = os.getenv("IGNORE_INF", "0") == "0"
+            perf_logger.info(f"Checking for inf in {predicted_logits.shape}: {check_for_inf}")
+            if check_for_inf and torch.any(torch.isinf(predicted_logits)):
                 raise RuntimeError('Encountered inf in predicted array. Aborting... If this problem persists, '
                                    'reduce value_scaling_factor in compute_gaussian or increase the dtype of '
                                    'predicted_logits to fp32')
@@ -682,7 +683,6 @@ class nnUNetPredictor(object):
             empty_cache(self.device)
             empty_cache(results_device)
             raise e
-        print("end inf")
         return predicted_logits
 
     @torch.inference_mode()
@@ -703,6 +703,7 @@ class nnUNetPredictor(object):
         with torch.autocast(self.device.type, enabled=True) if self.device.type == 'cuda' else dummy_context():
             assert input_image.ndim == 4, 'input_image must be a 4D np.ndarray or torch.Tensor (c, x, y, z)'
 
+            perf_logger.info(f"Input shape: {input_image.shape}, step_size: {self.tile_step_size}")
             if self.verbose:
                 print(f'Input shape: {input_image.shape}')
                 print("step_size:", self.tile_step_size)
@@ -731,9 +732,7 @@ class nnUNetPredictor(object):
             del data
             empty_cache(self.device)
             # revert padding
-            print("Reverting")
             predicted_logits = predicted_logits[(slice(None), *slicer_revert_padding[1:])]
-            print("Reverted")
         return predicted_logits
 
     def predict_from_files_sequential(self,
@@ -822,7 +821,7 @@ class nnUNetPredictor(object):
 
             for key, value in list(timer_data.items()):
                 del timer_data[key]
-                print(key, value)
+                perf_logger.info(f"{key}, {value}")
 
         # clear lru cache
         compute_gaussian.cache_clear()
