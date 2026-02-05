@@ -91,3 +91,11 @@ class nnUNetTrainerMuonNesterov3en4(nnUNetTrainerMuonNesterov):
                  device: torch.device = torch.device('cuda')):
         super().__init__(plans, configuration, fold, dataset_json, device)
         self.initial_lr = 3e-4
+
+
+class nnUNetTrainerMuonNesterov3en4_500(nnUNetTrainerMuonNesterov):
+    def __init__(self, plans: dict, configuration: str, fold: int, dataset_json: dict,
+                 device: torch.device = torch.device('cuda')):
+        super().__init__(plans, configuration, fold, dataset_json, device)
+        self.initial_lr = 3e-4
+        self.num_epochs = 500
