@@ -49,7 +49,7 @@ def main():
     shutil.copy(model_checkpoint, os.path.join(args.docker_app, "checkpoint_final.pth"))
     shutil.copy(plans, os.path.join(args.docker_app, "plans.json"))
     shutil.copy(dataset, os.path.join(args.docker_app, "dataset.json"))
-    shutil.copy(os.path.join(os.path.basename(__file__), "process.py"), os.path.join(args.docker_app, "process.py"))
+    shutil.copy(os.path.join(os.path.dirname(__file__), "process.py"), os.path.join(args.docker_app, "process.py"))
 
     dockerfile = f"""
 FROM {args.base_docker_image}
