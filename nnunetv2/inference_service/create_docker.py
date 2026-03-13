@@ -78,7 +78,7 @@ COPY checkpoint_final.pth /app/nnUNet_results/{docker_model_folder}/fold_{args.f
 COPY dataset.json plans.json /app/nnUNet_results/{docker_model_folder}/
 COPY process.py /app
 
-ENTRYPOINT ["python", "process.py"]
+ENTRYPOINT ["python", "process.py", "--input", "/app/input", "--output", "/app/output"]
     """
     with open(os.path.join(args.docker_app, "Dockerfile"), "w") as f:
         f.write(dockerfile.strip() + "\n")
