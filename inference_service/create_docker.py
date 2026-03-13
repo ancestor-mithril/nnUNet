@@ -35,9 +35,9 @@ def main():
                         help='Name of the checkpoint you want to use. Default: checkpoint_final.pth')
     args = parser.parse_args()
 
-    if os.path.isdir(args.docker_output) and os.listdir(args.docker_output) != 0:
-        raise RuntimeError(f"Folder {args.docker_output} is not empty")
-    os.makedirs(args.docker_output, exist_ok=True)
+    if os.path.isdir(args.docker_app) and os.listdir(args.docker_app) != 0:
+        raise RuntimeError(f"Folder {args.docker_app} is not empty")
+    os.makedirs(args.docker_app, exist_ok=True)
 
     args.f = args.f if args.f == 'all' else int(args.f)
     model_folder = get_output_folder(args.d, args.tr, args.p, args.c)
@@ -46,10 +46,10 @@ def main():
     plans = os.path.join(model_folder, 'plans.json')
     model_checkpoint = os.path.join(model_folder, f"fold_{args.f}", args.chk)
 
-    shutil.copy(model_checkpoint, os.path.join(args.docker_output, "checkpoint_final.pth"))
-    shutil.copy(plans, os.path.join(args.docker_output, "plans.json"))
-    shutil.copy(dataset, os.path.join(args.docker_output, "dataset.json"))
-    shutil.copy(os.path.join(os.path.basename(__file__), "process.py"), os.path.join(args.docker_output, "process.py"))
+    shutil.copy(model_checkpoint, os.path.join(args.docker_app, "checkpoint_final.pth"))
+    shutil.copy(plans, os.path.join(args.docker_app, "plans.json"))
+    shutil.copy(dataset, os.path.join(args.docker_app, "dataset.json"))
+    shutil.copy(os.path.join(os.path.basename(__file__), "process.py"), os.path.join(args.docker_app, "process.py"))
 
     dockerfile = f"""
 FROM {args.base_docker_image}
@@ -77,7 +77,7 @@ COPY process.py /app
 
 ENTRYPOINT ["python", "process.py"]
     """
-    with open(os.path.join(args.docker_output, "Dockerfile"), "w") as f:
+    with open(os.path.join(args.docker_app, "Dockerfile"), "w") as f:
         f.write(dockerfile.strip() + "\n")
 
 
