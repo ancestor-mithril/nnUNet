@@ -295,12 +295,18 @@ class nnUNetTrainer(object):
                         # print(k)
                         pass
                 if k in ['dataloader_train', 'dataloader_val']:
-                    if hasattr(getattr(self, k), 'generator'):
-                        dct[k + '.generator'] = str(getattr(self, k).generator)
-                    if hasattr(getattr(self, k), 'num_processes'):
-                        dct[k + '.num_processes'] = str(getattr(self, k).num_processes)
-                    if hasattr(getattr(self, k), 'transform'):
-                        dct[k + '.transform'] = str(getattr(self, k).transform)
+                    dl = getattr(self, k)
+                    if hasattr(dl, 'generator'):
+                        dct[k + '.generator'] = str(dl.generator)
+                        if hasattr(dl.generator, 'transforms'):
+                            try:
+                                dct[k + '.generator.transforms'] = str(dl.generator.transforms)
+                            except Exception as e:
+                                dct[k + '.generator.transforms'] = f"Could not stringify generator.transforms: {type(e).__name__}: {e}"
+                    if hasattr(dl, 'num_processes'):
+                        dct[k + '.num_processes'] = str(dl.num_processes)
+                    if hasattr(dl, 'transform'):
+                        dct[k + '.transform'] = str(dl.transform)
             import subprocess
             hostname = subprocess.getoutput(['hostname'])
             dct['hostname'] = hostname
@@ -1309,8 +1315,10 @@ class nnUNetTrainer(object):
                     )
                 )
                 # for debug purposes
-                # export_prediction_from_logits(prediction, properties, self.configuration_manager, self.plans_manager,
-                #      self.dataset_json, output_filename_truncated, save_probabilities)
+                # export_prediction_from_logits(
+                #     prediction, properties, self.configuration_manager, self.plans_manager,
+                #      self.dataset_json, output_filename_truncated, save_probabilities
+                # )
 
                 # if needed, export the softmax prediction for the next stage
                 if next_stages is not None:
