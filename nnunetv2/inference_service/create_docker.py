@@ -61,6 +61,9 @@ ENV nnUNet_conf={args.c}
 ENV nnUNet_fold={args.f}
 ENV nnUNet_step_size={args.step_size}
 ENV nnUNet_disable_tta={'1' if args.disable_tta else '0'}
+ENV copy_elision=1
+ENV IGNORE_INF=1
+ENV PERF_LOGGER=1
 
 ENV nnUNet_raw=/app/nnUNet_raw
 ENV nnUNet_results=/app/nnUNet_results
