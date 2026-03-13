@@ -69,7 +69,7 @@ ENV nnUNet_preprocessed=/app/nnUNet_preprocessed
 WORKDIR /app
 
 RUN mkdir -p /app/input /app/output /app/nnUNet_raw /app/nnUNet_results /app/nnUNet_preprocessed && \
-    && pip install timed-decorator && pip uninstall nnunetv2 --yes && pip install 'git+https://github.com/ancestor-mithril/nnUNet.git@new' --no-cache-dir
+    pip install timed-decorator && pip uninstall nnunetv2 --yes && pip install 'git+https://github.com/ancestor-mithril/nnUNet.git@new' --no-cache-dir
 
 COPY checkpoint_final.pth /app/nnUNet_results/{docker_model_folder}/fold_{args.f}/
 COPY dataset.json plans.json /app/nnUNet_results/{docker_model_folder}/
