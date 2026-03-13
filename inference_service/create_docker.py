@@ -35,7 +35,7 @@ def main():
                         help='Name of the checkpoint you want to use. Default: checkpoint_final.pth')
     args = parser.parse_args()
 
-    if os.path.isdir(args.docker_app) and os.listdir(args.docker_app) != 0:
+    if os.path.isdir(args.docker_app) and len(os.listdir(args.docker_app)) != 0:
         raise RuntimeError(f"Folder {args.docker_app} is not empty")
     os.makedirs(args.docker_app, exist_ok=True)
 
