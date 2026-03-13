@@ -37,7 +37,7 @@ def try_inference(input_path: str, output_path: str, use_cuda: bool = False, dev
         command += "--disable_tta "
     command = command.strip()
     try:
-        subprocess.run(command, env=envs, check=True)
+        subprocess.run(command, env=envs, check=True, shell=True)
         return True
     except subprocess.CalledProcessError:
         return False
