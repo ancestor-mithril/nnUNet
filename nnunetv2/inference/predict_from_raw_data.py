@@ -669,7 +669,7 @@ class nnUNetPredictor(object):
             t.join()
             # predicted_logits /= n_predictions
             torch.div(predicted_logits, n_predictions, out=predicted_logits)
-            del queue, t, n_predictions
+            del queue, t, n_predictions, prediction, workon
             gc.collect()
             # check for infs
             check_for_inf = os.getenv("IGNORE_INF", "0") == "0"
@@ -679,7 +679,7 @@ class nnUNetPredictor(object):
                                    'reduce value_scaling_factor in compute_gaussian or increase the dtype of '
                                    'predicted_logits to fp32')
         except Exception as e:
-            del predicted_logits, n_predictions, prediction, gaussian, workon
+            del predicted_logits, gaussian
             empty_cache(self.device)
             empty_cache(results_device)
             raise e
