@@ -210,7 +210,10 @@ def run_training(dataset_name_or_id: Union[str, int],
 
         if val_with_best:
             nnunet_trainer.load_checkpoint(join(nnunet_trainer.output_folder, 'checkpoint_best.pth'))
-        nnunet_trainer.perform_actual_validation(export_validation_probabilities)
+        if os.getenv("DO_VALIDATION", "0") == "1":
+            nnunet_trainer.perform_actual_validation(export_validation_probabilities)
+        else:
+            print("Validation not done. To run validation, set the environment: DO_VALIDATION=1")
 
 
 def run_training_entry():
