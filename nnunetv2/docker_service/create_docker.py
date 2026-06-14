@@ -1,0 +1,53 @@
+import argparse
+import os
+
+
+def entry_point():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-docker_app", type=str, required=True,
+                        help="Folder in which to create the docker app")
+    parser.add_argument("-base_docker_image", type=str, required=False, default="cuda12.9:py3.13_torch2.8.0",
+                        help="Base docker image")
+    args = parser.parse_args()
+
+    if os.path.isdir(args.docker_app) and len(os.listdir(args.docker_app)) != 0:
+        raise RuntimeError(f"Folder {args.docker_app} is not empty")
+
+    os.makedirs(args.docker_app, exist_ok=True)
+    dockerfile = f"""
+FROM {args.base_docker_image}
+
+ENV nnUNet_dataset=100
+ENV nnUNet_plans=nnUNetResEncUNetLPlans_torchres
+ENV nnUNet_trainer=nnUNetTrainerMuon3en4
+ENV nnUNet_conf=3d_fullres
+ENV nnUNet_step_size=0.5
+ENV nnUNet_disable_tta=0
+
+ENV copy_elision=1
+ENV IGNORE_INF=1
+ENV PERF_LOGGER=1
+
+ENV nnUNet_raw=/app/nnUNet_raw
+ENV nnUNet_results=/app/nnUNet_results
+ENV nnUNet_preprocessed=/app/nnUNet_preprocessed
+
+WORKDIR /app
+
+RUN mkdir -p /app/input /app/output /app/nnUNet_raw/Dataset100_A /app/nnUNet_results/Dataset100_A/nnUNetTrainerMuon3en4__nnUNetResEncUNetLPlans_torchres__3d_fullres /app/nnUNet_preprocessed/Dataset100_A && \
+    chmod 777 /app/output && \
+    chmod 777 /app/nnUNet_preprocessed/Dataset100_A && \
+    chmod 777 /app/nnUNet_results/Dataset100_A/nnUNetTrainerMuon3en4__nnUNetResEncUNetLPlans_torchres__3d_fullres && \
+    pip install timed-decorator && \
+    pip uninstall nnunetv2 --yes && \
+    pip install 'git+https://github.com/ancestor-mithril/nnUNet.git@new' --no-cache-dir
+
+COPY entry_point.py /app
+
+ENTRYPOINT ["python", "entry_point.py"]
+    """
+    with open(os.path.join(args.docker_app, "Dockerfile"), "w") as f:
+        f.write(dockerfile.strip() + "\n")
+
+if __name__ == "__main__":
+    entry_point()
