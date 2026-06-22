@@ -185,7 +185,7 @@ def preprocess(args):
     labels = {
         "background": 0,
         **{label: i + 1 for i, label in enumerate(labels)},
-    },
+    }
     dataset = {
         "channel_names": {
             "0": "NIFTI"
