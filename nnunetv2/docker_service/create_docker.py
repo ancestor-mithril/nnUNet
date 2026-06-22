@@ -36,7 +36,7 @@ ENV nnUNet_results=/app/nnUNet_results
 ENV nnUNet_preprocessed=/app/nnUNet_preprocessed
 ENV cont_data_path=${{nnUNet_raw}}/Dataset100_A
 ENV cont_preproc_path=${{nnUNet_preprocessed}}/Dataset100_A
-ENV cont_model_path=${{cont_data_path}}/${{nnUNet_trainer}}__${{nnUNet_plans}}__${{nnUNet_conf}}
+ENV cont_model_path=${{nnUNet_results}}/Dataset100_A/${{nnUNet_trainer}}__${{nnUNet_plans}}__${{nnUNet_conf}}
 
 WORKDIR /app
 
