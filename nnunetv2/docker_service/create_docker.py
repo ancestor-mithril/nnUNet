@@ -40,8 +40,9 @@ ENV cont_model_path=${{nnUNet_results}}/Dataset100_A/${{nnUNet_trainer}}__${{nnU
 
 WORKDIR /app
 
-RUN mkdir -p /app/input /app/output ${{cont_data_path}} ${{cont_model_path}} ${{cont_preproc_path}} && \
+RUN mkdir -p /app/input /app/output ${{cont_data_path}} ${{cont_model_path}} ${{cont_preproc_path}} /home/jovyan && \
     chmod 777 /app/output && \
+    chmod 777 /home/jovyan && \
     chmod 777 ${{cont_preproc_path}} && \
     chmod 777 ${{cont_model_path}} && \
     pip install timed-decorator && \
