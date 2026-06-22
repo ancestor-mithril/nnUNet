@@ -16,6 +16,7 @@ def run_command(command, envs):
         subprocess.run(command, env=envs, check=True, shell=True)
         return True
     except subprocess.CalledProcessError:
+        print("Error for command:", command)
         return False
 
 
