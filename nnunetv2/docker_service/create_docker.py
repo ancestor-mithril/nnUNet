@@ -1,5 +1,6 @@
 import argparse
 import os
+import shutil
 
 
 def entry_point():
@@ -14,6 +15,8 @@ def entry_point():
         raise RuntimeError(f"Folder {args.docker_app} is not empty")
 
     os.makedirs(args.docker_app, exist_ok=True)
+    shutil.copy(os.path.join(os.path.dirname(__file__), "entry_point.py"), os.path.join(args.docker_app, "entry_point.py"))
+
     dockerfile = f"""
 FROM {args.base_docker_image}
 
