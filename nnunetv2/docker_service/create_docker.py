@@ -40,11 +40,10 @@ ENV cont_model_path=${{cont_data_path}}/${{nnUNet_trainer}}__${{nnUNet_plans}}__
 
 WORKDIR /app
 
-RUN mkdir -p /app/input /app/output $cont_data_path $cont_model_path $cont_preproc_path && \
+RUN mkdir -p /app/input /app/output ${{cont_data_path}} ${{cont_model_path}} ${{cont_preproc_path}} && \
     chmod 777 /app/output && \
-    chmod 777 $nnUNet_results && \
-    chmod 777 $cont_preproc_path && \
-    chmod 777 $cont_model_path && \
+    chmod 777 ${{cont_preproc_path}} && \
+    chmod 777 ${{cont_model_path}} && \
     pip install timed-decorator && \
     pip uninstall nnunetv2 --yes && \
     pip install 'git+https://github.com/ancestor-mithril/nnUNet.git@new' --no-cache-dir
