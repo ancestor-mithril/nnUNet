@@ -105,11 +105,11 @@ def pre_preprocess(labels, original_labels, labels_tr):
     files = [x for x in os.listdir(original_labels) if x.endswith(".nii.gz")]
 
     for f in tqdm(files, desc="Preprocessing masks"):
-        mask = os.path.join(original_labels, f.name)
+        mask = os.path.join(original_labels, f)
         mask_labels = mask.replace(".nii.gz", ".json")
         if not os.path.exists(mask_labels):
             raise FileNotFoundError(f"mask_labels {mask_labels} not available!")
-        new_mask = os.path.join(labels_tr, f.name)
+        new_mask = os.path.join(labels_tr, f)
 
         with open(mask_labels, "r") as fp:
             mask_labels = json.load(fp)
