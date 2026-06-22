@@ -31,6 +31,7 @@ ENV PERF_LOGGER=1
 ENV nnUNet_raw=/app/nnUNet_raw
 ENV nnUNet_results=/app/nnUNet_results
 ENV nnUNet_preprocessed=/app/nnUNet_preprocessed
+ENV model_path=/app/nnUNet_results/Dataset100_A/nnUNetTrainerMuon3en4__nnUNetResEncUNetLPlans_torchres__3d_fullres
 
 WORKDIR /app
 
@@ -48,6 +49,7 @@ ENTRYPOINT ["python", "entry_point.py"]
     """
     with open(os.path.join(args.docker_app, "Dockerfile"), "w") as f:
         f.write(dockerfile.strip() + "\n")
+
 
 if __name__ == "__main__":
     entry_point()

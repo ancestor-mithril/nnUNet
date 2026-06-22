@@ -4,7 +4,10 @@ import json
 import os
 import subprocess
 
+import numpy as np
+import SimpleITK as sitk
 import torch.accelerator
+from tqdm import tqdm
 
 
 def run_command(command, envs):
@@ -77,10 +80,52 @@ def inference(args):
         print("Inference succeeded")
 
 
+def remap_segmentation_labels(
+        input_path,
+        label_mapping,
+        output_path,
+):
+    img = sitk.ReadImage(input_path)
+    arr = sitk.GetArrayFromImage(img)
+    remapped_arr = np.zeros_like(arr)
+
+    for old_label, new_label in label_mapping.items():
+        remapped_arr[arr == old_label] = new_label
+
+    remapped_img = sitk.GetImageFromArray(remapped_arr)
+    remapped_img.CopyInformation(img)
+    sitk.WriteImage(remapped_img, output_path)
+
+
+def pre_preprocess(labels, original_labels, labels_tr):
+    os.makedirs(labels_tr, exist_ok=True)
+    labels = labels.copy()
+    del labels["background"]
+
+    files = [x for x in os.listdir(original_labels) if x.endswith(".nii.gz")]
+
+    for f in tqdm(files, desc="Preprocessing masks"):
+        mask = os.path.join(original_labels, f.name)
+        mask_labels = mask.replace(".nii.gz", ".json")
+        if not os.path.exists(mask_labels):
+            raise FileNotFoundError(f"mask_labels {mask_labels} not available!")
+        new_mask = os.path.join(labels_tr, f.name)
+
+        with open(mask_labels, "r") as fp:
+            mask_labels = json.load(fp)
+
+        mapping = {}
+        for k, v in labels.items():
+            if k in mask_labels:
+                mapping[mask_labels[k]] = v
+
+        remap_segmentation_labels(mask, mapping, new_mask)
+
+
 def preprocess(args):
     raw_path = "/app/nnUNet_raw/Dataset100_A"
     images_tr = os.path.join(raw_path, "imagesTr")
-    labels_tr = os.path.join(raw_path, "labelsTr")
+    original_labels = os.path.join(raw_path, "labels")
     preprocess_path = "/app/nnUNet_preprocessed/Dataset100_A"
     labels_json = os.path.join(raw_path, "labels.json")
     dataset_json = os.path.join(raw_path, "dataset.json")
@@ -89,44 +134,10 @@ def preprocess(args):
         raise FileNotFoundError(f"Folder {raw_path} is not available")
     if not os.path.isdir(images_tr):
         raise FileNotFoundError(f"Folder {images_tr} is not available")
-    if not os.path.isdir(labels_tr):
-        raise FileNotFoundError(f"Folder {labels_tr} is not available")
+    if not os.path.isdir(original_labels):
+        raise FileNotFoundError(f"Folder {original_labels} is not available")
     if not os.path.isdir(preprocess_path):
         raise FileNotFoundError(f"Folder {preprocess_path} is not available")
-
-    def create_dataset_json(n):
-        error_msg = (
-            f"File {labels_json} is not available or is corrupted.\n"
-            """
-            Example:
-            {	
-                "background": 0,
-                "bone": 1, 
-                "artery": 2, 
-                "calcification": 3, 
-                "thrombosis": 4
-            }
-            """
-        )
-        if not os.path.isfile(labels_json):
-            raise FileNotFoundError(error_msg)
-        try:
-            with open(labels_json, "r") as f:
-                labels = json.load(f)
-        except Exception as e:
-            raise RuntimeError(error_msg) from e
-
-        dataset = {
-            "channel_names": {
-                "0": "NIFTI"
-            },
-            labels: labels,
-            "numTraining": n,
-            "file_ending": ".nii.gz",
-            "overwrite_image_reader_writer": "SimpleITKIO"
-        }
-        with open(dataset_json, "w") as f:
-            json.dump(dataset, f)
 
     def get_case_names(paths):
         ret = []
@@ -138,7 +149,7 @@ def preprocess(args):
         return ret
 
     train_files = get_case_names(glob.glob(os.path.join(images_tr, "*_0000.nii.gz")))
-    label_files = get_case_names(glob.glob(os.path.join(labels_tr, "*.nii.gz")))
+    label_files = get_case_names(glob.glob(os.path.join(original_labels, "*.nii.gz")))
 
     if len(train_files) < 5:
         raise FileNotFoundError(f"Found less than 5 _0000.nii.gz files in {images_tr}")
@@ -150,7 +161,44 @@ def preprocess(args):
             f"Available training labels: {label_files}"
         )
 
-    create_dataset_json(len(train_files))
+    error_msg = (
+        f"File {labels_json} is not available or is corrupted.\n"
+        """
+        Example:
+        {	
+            "background": 0,
+            "bone": 1, 
+            "artery": 2, 
+            "calcification": 3, 
+            "thrombosis": 4
+        }
+        """
+    )
+    if not os.path.isfile(labels_json):
+        raise FileNotFoundError(error_msg)
+    try:
+        with open(labels_json, "r") as f:
+            labels = json.load(f)
+    except Exception as e:
+        raise RuntimeError(error_msg) from e
+
+    labels = {
+        "background": 0,
+        **{label: i + 1 for i, label in enumerate(labels)},
+    },
+    dataset = {
+        "channel_names": {
+            "0": "NIFTI"
+        },
+        "labels": labels,
+        "numTraining": len(train_files),
+        "file_ending": ".nii.gz",
+        "overwrite_image_reader_writer": "SimpleITKIO"
+    }
+    with open(dataset_json, "w") as f:
+        json.dump(dataset, f)
+    labels_tr = os.path.join(raw_path, "labelsTr")
+    pre_preprocess(labels, original_labels, labels_tr)
 
     envs = {**os.environ}
     command = (
@@ -193,9 +241,21 @@ def train(args):
         raise RuntimeError("Training failed")
 
 
+def props(_):
+    properties = {
+        "DATASET_PATH": os.getenv("nnUNet_raw"),
+        "PREPROCESSED_PATH": os.getenv("nnUNet_preprocessed"),
+        "MODEL_PATH": os.getenv("model_path"),
+    }
+    print(json.dumps(properties, indent=4))
+
+
 def main():
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers(dest="command", help="Available subcommands", required=True)
+
+    parser_props = subparsers.add_parser("props", help="Properties")
+    parser_props.set_defaults(func=props)
 
     parser_inference = subparsers.add_parser("inference", help="Do inference")
     parser_inference.add_argument("-fold", type=str, help="Fold", default="0")
