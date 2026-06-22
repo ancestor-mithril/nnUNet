@@ -21,7 +21,7 @@ def entry_point():
 FROM {args.base_docker_image}
 
 ENV nnUNet_dataset=100
-ENV nnUNet_plans=nnUNetPlannerResEncL_torchres
+ENV nnUNet_plans=nnUNetResEncUNetLPlans_torchres
 ENV nnUNet_trainer=nnUNetTrainerMuon3en4
 ENV nnUNet_conf=3d_fullres
 ENV nnUNet_step_size=0.5

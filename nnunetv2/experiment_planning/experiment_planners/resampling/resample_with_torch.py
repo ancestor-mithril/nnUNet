@@ -64,6 +64,10 @@ class nnUNetPlannerResEncL_torchres(nnUNetPlannerResEncL):
         return resampling_fn, resampling_fn_kwargs
 
 
+class nnUNetResEncUNetLPlans_torchres(nnUNetPlannerResEncL_torchres):
+    pass
+
+
 class nnUNetPlannerResEncL_torchres_sepz(nnUNetPlannerResEncL):
     def __init__(self, dataset_name_or_id: Union[str, int],
                  gpu_memory_target_in_gb: float = 24,
