@@ -21,7 +21,7 @@ def entry_point():
 FROM {args.base_docker_image}
 
 ENV nnUNet_dataset=100
-ENV nnUNet_plans=nnUNetResEncUNetLPlans_torchres
+ENV nnUNet_plans=nnUNetPlannerResEncL_torchres
 ENV nnUNet_trainer=nnUNetTrainerMuon3en4
 ENV nnUNet_conf=3d_fullres
 ENV nnUNet_step_size=0.5
@@ -34,9 +34,9 @@ ENV PERF_LOGGER=1
 ENV nnUNet_raw=/app/nnUNet_raw
 ENV nnUNet_results=/app/nnUNet_results
 ENV nnUNet_preprocessed=/app/nnUNet_preprocessed
-ENV cont_data_path=/app/nnUNet_raw/Dataset100_A
-ENV cont_preproc_path=/app/nnUNet_preprocessed/Dataset100_A
-ENV cont_model_path=/app/nnUNet_results/Dataset100_A/nnUNetTrainerMuon3en4__nnUNetResEncUNetLPlans_torchres__3d_fullres
+ENV cont_data_path=${{nnUNet_raw}}/Dataset100_A
+ENV cont_preproc_path=${{nnUNet_preprocessed}}/Dataset100_A
+ENV cont_model_path=${{cont_data_path}}/${{nnUNet_trainer}}__${{nnUNet_plans}}__${{nnUNet_conf}}
 
 WORKDIR /app
 
