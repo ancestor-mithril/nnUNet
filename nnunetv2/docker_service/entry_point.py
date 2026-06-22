@@ -243,9 +243,9 @@ def train(args):
 
 def props(_):
     properties = {
-        "DATASET_PATH": os.getenv("nnUNet_raw"),
-        "PREPROCESSED_PATH": os.getenv("nnUNet_preprocessed"),
-        "MODEL_PATH": os.getenv("model_path"),
+        "DATASET_PATH": os.getenv("cont_data_path"),
+        "PREPROCESSED_PATH": os.getenv("cont_preproc_path"),
+        "MODEL_PATH": os.getenv("cont_model_path"),
     }
     print(json.dumps(properties, indent=4))
 

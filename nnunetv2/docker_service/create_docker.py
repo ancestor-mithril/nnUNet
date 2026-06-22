@@ -34,14 +34,16 @@ ENV PERF_LOGGER=1
 ENV nnUNet_raw=/app/nnUNet_raw
 ENV nnUNet_results=/app/nnUNet_results
 ENV nnUNet_preprocessed=/app/nnUNet_preprocessed
-ENV model_path=/app/nnUNet_results/Dataset100_A/nnUNetTrainerMuon3en4__nnUNetResEncUNetLPlans_torchres__3d_fullres
+ENV cont_data_path=/app/nnUNet_raw/Dataset100_A
+ENV cont_preproc_path=/app/nnUNet_preprocessed/Dataset100_A
+ENV cont_model_path=/app/nnUNet_results/Dataset100_A/nnUNetTrainerMuon3en4__nnUNetResEncUNetLPlans_torchres__3d_fullres
 
 WORKDIR /app
 
-RUN mkdir -p /app/input /app/output /app/nnUNet_raw/Dataset100_A /app/nnUNet_results/Dataset100_A/nnUNetTrainerMuon3en4__nnUNetResEncUNetLPlans_torchres__3d_fullres /app/nnUNet_preprocessed/Dataset100_A && \
+RUN mkdir -p /app/input /app/output $cont_data_path $cont_model_path $cont_preproc_path && \
     chmod 777 /app/output && \
-    chmod 777 /app/nnUNet_preprocessed/Dataset100_A && \
-    chmod 777 /app/nnUNet_results/Dataset100_A/nnUNetTrainerMuon3en4__nnUNetResEncUNetLPlans_torchres__3d_fullres && \
+    chmod 777 $cont_preproc_path && \
+    chmod 777 $cont_model_path && \
     pip install timed-decorator && \
     pip uninstall nnunetv2 --yes && \
     pip install 'git+https://github.com/ancestor-mithril/nnUNet.git@new' --no-cache-dir
