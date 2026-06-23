@@ -1409,5 +1409,7 @@ class nnUNetTrainer(object):
                 self.on_validation_epoch_end(val_outputs)
 
             self.on_epoch_end()
+            if os.getenv("nnUNet_stop_first_epoch", "0") == "1":
+                break
 
         self.on_train_end()

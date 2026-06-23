@@ -247,6 +247,8 @@ def props(_):
         "DATASET_PATH": os.getenv("cont_data_path"),
         "PREPROCESSED_PATH": os.getenv("cont_preproc_path"),
         "MODEL_PATH": os.getenv("cont_model_path"),
+        "INPUT": os.getenv("cont_input_path"),
+        "OUTPUT": os.getenv("cont_output_path"),
     }
     print(json.dumps(properties, indent=4))
 
