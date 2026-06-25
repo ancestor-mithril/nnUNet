@@ -20,7 +20,8 @@ def run_command(command, envs):
         return False
 
 
-def try_inference(input_path: str, output_path: str, fold: str, use_cuda: bool = False, device_index: int = 0):
+def try_inference(input_path: str, output_path: str, fold: str, use_cuda: bool = False, device_index: int = 0,
+                  use_best: bool = False):
     if use_cuda:
         print(f"Using cuda device {device_index} for inference!")
     else:
@@ -29,6 +30,8 @@ def try_inference(input_path: str, output_path: str, fold: str, use_cuda: bool =
     envs = {**os.environ}
     if use_cuda:
         envs["CUDA_VISIBLE_DEVICES"] = str(device_index)
+
+    checkpoint = "checkpoint_best.pth" if use_best else "checkpoint_final.pth"
 
     command = (
         f"nnUNetv2_predict "
@@ -40,6 +43,7 @@ def try_inference(input_path: str, output_path: str, fold: str, use_cuda: bool =
         f"-c {envs['nnUNet_conf']} "
         f"-f {fold} "
         f"-step_size {envs['nnUNet_step_size']} "
+        f"-chk {checkpoint} "
         f"-npp 0 "
         f"-nps 0 "
     )
@@ -56,6 +60,7 @@ def inference(args):
     model_path = "/app/nnUNet_results/Dataset100_A/nnUNetTrainerMuon3en4__nnUNetResEncUNetLPlans_torchres__3d_fullres"
     fold_path = os.path.join(model_path, f"fold_{args.fold}")
     model_checkpoint = os.path.join(fold_path, f"checkpoint_final.pth")
+    use_best = False
     if not os.path.isdir(args.input):
         raise FileNotFoundError(f"Folder {args.input} is not available")
     if not os.path.isdir(model_path):
@@ -63,7 +68,11 @@ def inference(args):
     if not os.path.isdir(fold_path):
         raise FileNotFoundError(f"Fold {fold_path} not available, please train the model first")
     if not os.path.isfile(model_checkpoint):
-        raise FileNotFoundError(f"Model checkpoint{model_checkpoint} not available, please train the model first")
+        print(f"Model checkpoint{model_checkpoint} not available")
+        model_checkpoint = os.path.join(fold_path, f"checkpoint_best.pth")
+        use_best = True
+        if not os.path.isfile(model_checkpoint):
+            raise FileNotFoundError(f"Model checkpoint{model_checkpoint} not available, please train the model first")
 
     files = glob.glob(os.path.join(args.input, "*_0000.nii.gz"))
     if len(files) == 0:
@@ -72,9 +81,10 @@ def inference(args):
         raise FileNotFoundError(f"Folder {args.output} is not available")
 
     print(f"Cuda Available: {torch.cuda.is_available()}")
-    succeeded = try_inference(args.input, args.output, args.fold, use_cuda=True, device_index=args.device)
+    succeeded = try_inference(args.input, args.output, args.fold, use_cuda=True, device_index=args.device,
+                              use_best=use_best)
     if not succeeded:
-        succeeded = try_inference(args.input, args.output, use_cuda=False)
+        succeeded = try_inference(args.input, args.output, use_cuda=False, use_best=use_best)
         if not succeeded:
             print("Inference failed. Check the logs for the error")
             raise RuntimeError("Inference failed")
@@ -213,6 +223,20 @@ def preprocess(args):
     if not succeeded:
         print("Preprocess failed. Check the logs for the error")
         raise RuntimeError("Preprocess failed")
+    command = (
+        "nnUNetv2_train "
+        f"-p {envs['nnUNet_plans']} "
+        f"-tr {envs['nnUNet_trainer']} "
+        f"--c "
+        f"{envs['nnUNet_dataset']} "
+        f"{envs['nnUNet_conf']} "
+        f"{0} "
+    )
+    envs["EXIT_AFTER_SPLIT"] = "1"
+    succeeded = run_command(command, envs)
+    if not succeeded:
+        print("Split creation failed. Check the logs for the error")
+        raise RuntimeError("Split creation failed")
 
 
 def train(args):

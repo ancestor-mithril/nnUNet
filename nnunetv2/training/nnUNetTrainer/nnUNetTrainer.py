@@ -600,6 +600,8 @@ class nnUNetTrainer(object):
                 all_keys_sorted = list(np.sort(list(dataset.identifiers)))
                 splits = generate_crossval_split(all_keys_sorted, seed=12345, n_splits=5)
                 save_json(splits, splits_file)
+                if os.getenv("EXIT_AFTER_SPLIT", "0") == "1":
+                    exit(0)
 
             else:
                 self.print_to_log_file("Using splits from existing split file:", splits_file)
