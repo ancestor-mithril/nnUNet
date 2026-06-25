@@ -234,6 +234,7 @@ def preprocess(args):
         "-device cpu"
     )
     envs["EXIT_AFTER_SPLIT"] = "1"
+    envs["nnUNet_compile"] = "0"
     succeeded = run_command(command, envs)
     if not succeeded:
         print("Split creation failed. Check the logs for the error")
