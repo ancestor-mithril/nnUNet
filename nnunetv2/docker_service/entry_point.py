@@ -231,6 +231,7 @@ def preprocess(args):
         f"{envs['nnUNet_dataset']} "
         f"{envs['nnUNet_conf']} "
         f"{0} "
+        "-device cpu"
     )
     envs["EXIT_AFTER_SPLIT"] = "1"
     succeeded = run_command(command, envs)

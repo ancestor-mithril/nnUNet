@@ -608,6 +608,8 @@ class nnUNetTrainer(object):
                 splits = load_json(splits_file)
                 self.print_to_log_file(f"The split file contains {len(splits)} splits.")
 
+            if os.getenv("EXIT_AFTER_SPLIT", "0") == "1":
+                exit(0)
             self.print_to_log_file("Desired fold for training: %d" % self.fold)
             if self.fold < len(splits):
                 tr_keys = splits[self.fold]['train']
@@ -635,6 +637,8 @@ class nnUNetTrainer(object):
     def get_tr_and_val_datasets(self):
         # create dataset split
         tr_keys, val_keys = self.do_split()
+        if os.getenv("EXIT_AFTER_SPLIT", "0") == "1":
+            exit(0)
 
         # load the datasets for training and validation. Note that we always draw random samples so we really don't
         # care about distributing training cases across GPUs.
@@ -921,6 +925,8 @@ class nnUNetTrainer(object):
         # dataloaders must be instantiated here (instead of __init__) because they need access to the training data
         # which may not be present  when doing inference
         self.dataloader_train, self.dataloader_val = self.get_dataloaders()
+        if os.getenv("EXIT_AFTER_SPLIT", "0") != "0":
+            exit(0)
 
         maybe_mkdir_p(self.output_folder)
 
