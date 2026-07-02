@@ -9,6 +9,11 @@ import SimpleITK as sitk
 import torch.accelerator
 from tqdm import tqdm
 
+num_epochs_range = [100, 250, 500, 1000, 2000]
+model_sizes_range = [
+    8, 12, 18, 24, 32
+]
+
 
 def run_command(command, envs):
     command = command.strip()
@@ -218,6 +223,7 @@ def preprocess(args):
         f"-pl {envs['nnUNet_plans']} "
         f"-np {args.num_workers} "
         f"-c {envs['nnUNet_conf']} "
+        f"-gpu_memory_target {args.model_size} "
     )
     succeeded = run_command(command, envs)
     if not succeeded:
@@ -242,16 +248,34 @@ def preprocess(args):
 
 
 def train(args):
-    preprocess_path = "/app/nnUNet_preprocessed/Dataset100_A"
+    preprocess_path = os.getenv("cont_preproc_path")
+    model_path = os.getenv("cont_model_path")
     dataset_json = os.path.join(preprocess_path, "dataset.json")
+    json_num_epochs = os.path.join(model_path, "num_epochs.json")
 
     if not os.path.isdir(preprocess_path):
         raise FileNotFoundError(f"Folder {preprocess_path} is not available. Run preprocessing first!")
+    if not os.path.isdir(model_path):
+        raise FileNotFoundError(f"Folder {model_path} is not available. Training can't be performed!")
     if not os.path.isfile(dataset_json):
         raise FileNotFoundError(f"File {dataset_json} is not available. Run preprocessing first")
 
-    envs = {**os.environ}
-    envs["CUDA_VISIBLE_DEVICES"] = str(args.device)
+    if not os.path.isfile(json_num_epochs):
+        with open(json_num_epochs, "w") as f:
+            json.dump({"num_epochs": args.num_epochs}, f)
+    else:
+        with open(json_num_epochs, "r") as f:
+            num_epochs = json.load(f)
+        if num_epochs != args.num_epochs:
+            raise RuntimeError(f"Training already started with {num_epochs} epochs in this folder! "
+                               f"Resuming a training with {args.num_epochs} epochs is not possible. "
+                               f"Use a different folder when training with {args.num_epochs} epochs.")
+
+    envs = {
+        "NUM_EPOCHS": str(args.num_epochs),
+        "CUDA_VISIBLE_DEVICES": str(args.device),
+        **os.environ,
+    }
     command = (
         "nnUNetv2_train "
         f"-p {envs['nnUNet_plans']} "
@@ -275,6 +299,9 @@ def props(_):
         "MODEL_PATH": os.getenv("cont_model_path"),
         "INPUT": os.getenv("cont_input_path"),
         "OUTPUT": os.getenv("cont_output_path"),
+        "NUM_EPOCHS_RANGE": num_epochs_range,
+        "MODEL_SIZES_RANGE": model_sizes_range,
+        "FALLBACK_MODEL": "/home/duktech/ArtCADe/data/nnUNet_results/Dataset313_Carotide_more_AiPAD/nnUNetTrainerMuonNesterov3en4_500__nnUNetResEncUNetLPlans_torchres__3d_fullres"
     }
     print(json.dumps(properties, indent=4))
 
@@ -294,11 +321,14 @@ def main():
     parser_preprocess = subparsers.add_parser("preprocess", help="Do preprocessing")
     parser_preprocess.add_argument("-num_workers", type=int, default=4,
                                    help="Number of parallel processes for preprocessing")
+    parser_preprocess.add_argument("-model_size", type=int, help="Model size in VRAM", default=24,
+                                   choices=model_sizes_range)
     parser_preprocess.set_defaults(func=preprocess)
 
     parser_train = subparsers.add_parser("train", help="Do training")
     parser_train.add_argument("-fold", type=str, help="Fold", default="0")
     parser_train.add_argument("-device", type=int, help="CUDA device index", default=0)
+    parser_train.add_argument("-num_epochs", type=int, help="Number of epochs", default=1000, choices=num_epochs_range)
     parser_train.set_defaults(func=train)
 
     args = parser.parse_args()
