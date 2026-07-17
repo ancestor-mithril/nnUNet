@@ -1,12 +1,6 @@
 import torch
 from torch.optim import Adam, AdamW, Optimizer
 
-try:
-    from torch.optim import Muon as rMuon
-except:
-    print("Torch muon not available")
-    rMuon = None
-
 from nnunetv2.training.lr_scheduler.polylr import PolyLRScheduler
 from nnunetv2.training.nnUNetTrainer.nnUNetTrainer import nnUNetTrainer
 
@@ -64,72 +58,12 @@ class nnUNetTrainerAdam3en4(nnUNetTrainerAdam):
         self.initial_lr = 3e-4
 
 
-class AdamWMuonOptim(Optimizer):
-    def __init__(self, params, lr, weight_decay):
-        params = list(params)
-        self.muon_params = [p for p in params if p.ndim == 2]
-        self.adamw_params = [p for p in params if p.ndim != 2]
-
-        self.muon = rMuon(self.muon_params, lr=lr, weight_decay=weight_decay)
-        self.adamw = AdamW(self.muon_params, lr=lr, weight_decay=weight_decay)
-
-    def zero_grad(self, set_to_none=True):
-        self.muon.zero_grad(set_to_none=set_to_none)
-        self.adamw.zero_grad(set_to_none=set_to_none)
-
-    def step(self, closure=None):
-        self.muon.step(closure=closure)
-        self.adamw.step(closure=closure)
-
-
-class nnUNetTrainer_AdamWMuon(nnUNetTrainerAdam):
+class nnUNetTrainerMuon(nnUNetTrainerAdam):
     def __init__(self, plans: dict, configuration: str, fold: int, dataset_json: dict,
                  device: torch.device = torch.device('cuda')):
         super().__init__(plans, configuration, fold, dataset_json, device)
         self.initial_lr = 1e-4
 
-    def configure_optimizers(self):
-        optimizer = AdamWMuonOptim(self.network.parameters(), lr=self.initial_lr, weight_decay=self.weight_decay)
-        lr_scheduler = PolyLRScheduler(optimizer, self.initial_lr, self.num_epochs)
-        return optimizer, lr_scheduler
-
-
-class nnUNetTrainer_AdamWMuon_500(nnUNetTrainer_AdamWMuon):
-    def __init__(self, plans: dict, configuration: str, fold: int, dataset_json: dict,
-                 device: torch.device = torch.device('cuda')):
-        super().__init__(plans, configuration, fold, dataset_json, device)
-        self.num_epochs = 500
-
-
-class nnUNetTrainer_AdamWMuon_250(nnUNetTrainer_AdamWMuon):
-    def __init__(self, plans: dict, configuration: str, fold: int, dataset_json: dict,
-                 device: torch.device = torch.device('cuda')):
-        super().__init__(plans, configuration, fold, dataset_json, device)
-        self.num_epochs = 250
-
-
-class nnUNetTrainer_AdamWMuon_3e4(nnUNetTrainer_AdamWMuon):
-    def __init__(self, plans: dict, configuration: str, fold: int, dataset_json: dict,
-                 device: torch.device = torch.device('cuda')):
-        super().__init__(plans, configuration, fold, dataset_json, device)
-        self.initial_lr = 3e-4
-
-
-class nnUNetTrainer_AdamWMuon_3e4_500(nnUNetTrainer_AdamWMuon_3e4):
-    def __init__(self, plans: dict, configuration: str, fold: int, dataset_json: dict,
-                 device: torch.device = torch.device('cuda')):
-        super().__init__(plans, configuration, fold, dataset_json, device)
-        self.num_epochs = 500
-
-
-class nnUNetTrainer_AdamWMuon_3e4_250(nnUNetTrainer_AdamWMuon_3e4):
-    def __init__(self, plans: dict, configuration: str, fold: int, dataset_json: dict,
-                 device: torch.device = torch.device('cuda')):
-        super().__init__(plans, configuration, fold, dataset_json, device)
-        self.num_epochs = 250
-
-
-class nnUNetTrainerMuon(nnUNetTrainerAdam):
     def configure_optimizers(self):
         from timm.optim.muon import Muon
 
@@ -138,6 +72,20 @@ class nnUNetTrainerMuon(nnUNetTrainerAdam):
                          weight_decay=self.weight_decay)
         lr_scheduler = PolyLRScheduler(optimizer, self.initial_lr, self.num_epochs)
         return optimizer, lr_scheduler
+
+
+class nnUNetTrainerMuon_500(nnUNetTrainerAdam):
+    def __init__(self, plans: dict, configuration: str, fold: int, dataset_json: dict,
+                 device: torch.device = torch.device('cuda')):
+        super().__init__(plans, configuration, fold, dataset_json, device)
+        self.num_epochs = 500
+
+
+class nnUNetTrainerMuon_250(nnUNetTrainerAdam):
+    def __init__(self, plans: dict, configuration: str, fold: int, dataset_json: dict,
+                 device: torch.device = torch.device('cuda')):
+        super().__init__(plans, configuration, fold, dataset_json, device)
+        self.num_epochs = 250
 
 
 class nnUNetTrainerMuonNesterov(nnUNetTrainerAdam):
