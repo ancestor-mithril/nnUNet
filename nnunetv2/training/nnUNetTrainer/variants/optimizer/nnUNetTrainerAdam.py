@@ -1,5 +1,11 @@
 import torch
-from torch.optim import Adam, AdamW, Optimizer, Muon as rMuon
+from torch.optim import Adam, AdamW, Optimizer
+
+try:
+    from torch.optim import Muon as rMuon
+except:
+    print("Torch muon not available")
+    rMuon = None
 
 from nnunetv2.training.lr_scheduler.polylr import PolyLRScheduler
 from nnunetv2.training.nnUNetTrainer.nnUNetTrainer import nnUNetTrainer
