@@ -1049,7 +1049,8 @@ class nnUNetTrainer(object):
             assert_model_finite(self.network, "pre-forward")
         except Exception as e:
             print(e, ":(", "before forward")
-        with autocast(self.device.type, enabled=True) if self.device.type == 'cuda' else dummy_context():
+        context = autocast(self.device.type, enabled=True) if self.device.type == 'cuda' and os.getenv("AUTOGRAD", "1") == "1" else dummy_context()
+        with context:
             output = self.network(data)
             # del data
             l = self.loss(output, target)
