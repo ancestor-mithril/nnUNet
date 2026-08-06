@@ -58,7 +58,7 @@ from nnunetv2.training.loss.compound_losses import DC_and_CE_loss, DC_and_BCE_lo
 from nnunetv2.training.loss.deep_supervision import DeepSupervisionWrapper
 from nnunetv2.training.loss.dice import get_tp_fp_fn_tn, MemoryEfficientSoftDiceLoss
 from nnunetv2.training.lr_scheduler.polylr import PolyLRScheduler
-from nnunetv2.utilities.collate_outputs import collate_outputs
+from nnunetv2.utilities.collate_outputs import collate_outputs, serializable
 from nnunetv2.utilities.crossval_split import generate_crossval_split
 from nnunetv2.utilities.default_n_proc_DA import get_allowed_n_proc_DA
 from nnunetv2.utilities.file_path_utilities import check_workers_alive_and_busy
@@ -1029,9 +1029,9 @@ class nnUNetTrainer(object):
         return {'loss': l.detach().cpu().numpy()}
 
     def on_train_epoch_end(self, train_outputs: List[dict]):
-        print(json.dumps(train_outputs, indent=2))
+        print(json.dumps(serializable(train_outputs), indent=2))
         outputs = collate_outputs(train_outputs)
-        print(json.dumps(outputs, indent=2))
+        print(json.dumps(serializable(outputs), indent=2))
         print(":(:(")
 
         if self.is_ddp:
