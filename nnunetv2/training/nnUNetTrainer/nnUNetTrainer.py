@@ -68,6 +68,43 @@ from nnunetv2.utilities.label_handling.label_handling import convert_labelmap_to
 from nnunetv2.utilities.plans_handling.plans_handler import PlansManager
 
 
+def assert_finite_tensor(name, x):
+    if isinstance(x, (list, tuple)):
+        for i, value in enumerate(x):
+            assert_finite_tensor(f"{name}[{i}]", value)
+        return
+
+    if not torch.isfinite(x).all():
+        finite = x[torch.isfinite(x)]
+
+        print(f"\nNON-FINITE: {name}")
+        print(f"shape: {tuple(x.shape)}")
+        print(f"dtype: {x.dtype}")
+        print(f"nan: {torch.isnan(x).sum().item()}")
+        print(f"+inf: {torch.isposinf(x).sum().item()}")
+        print(f"-inf: {torch.isneginf(x).sum().item()}")
+
+        if finite.numel():
+            print(f"finite min: {finite.min().item()}")
+            print(f"finite max: {finite.max().item()}")
+            print(f"finite mean: {finite.float().mean().item()}")
+
+        raise FloatingPointError(name)
+
+
+def assert_model_finite(model, where):
+    for name, parameter in model.named_parameters():
+        if not torch.isfinite(parameter).all():
+            raise FloatingPointError(
+                f"Non-finite parameter {name} {where}"
+            )
+
+    for name, buffer in model.named_buffers():
+        if torch.is_floating_point(buffer) and not torch.isfinite(buffer).all():
+            raise FloatingPointError(
+                f"Non-finite buffer {name} {where}"
+            )
+
 class nnUNetTrainer(object):
     def __init__(self, plans: dict, configuration: str, fold: int, dataset_json: dict,
                  device: torch.device = torch.device('cuda')):
@@ -1008,46 +1045,15 @@ class nnUNetTrainer(object):
         # If the device_type is 'cpu' then it's slow as heck and needs to be disabled.
         # If the device_type is 'mps' then it will complain that mps is not implemented, even if enabled=False is set. Whyyyyyyy. (this is why we don't make use of enabled=False)
         # So autocast will only be active if we have a cuda device.
+        try:
+            assert_model_finite(self.network, "pre-forward")
+        except Exception as e:
+            print(e, ":(", "before forward")
         with autocast(self.device.type, enabled=True) if self.device.type == 'cuda' else dummy_context():
             output = self.network(data)
             # del data
             l = self.loss(output, target)
 
-        def assert_finite_tensor(name, x):
-            if isinstance(x, (list, tuple)):
-                for i, value in enumerate(x):
-                    assert_finite_tensor(f"{name}[{i}]", value)
-                return
-
-            if not torch.isfinite(x).all():
-                finite = x[torch.isfinite(x)]
-
-                print(f"\nNON-FINITE: {name}")
-                print(f"shape: {tuple(x.shape)}")
-                print(f"dtype: {x.dtype}")
-                print(f"nan: {torch.isnan(x).sum().item()}")
-                print(f"+inf: {torch.isposinf(x).sum().item()}")
-                print(f"-inf: {torch.isneginf(x).sum().item()}")
-
-                if finite.numel():
-                    print(f"finite min: {finite.min().item()}")
-                    print(f"finite max: {finite.max().item()}")
-                    print(f"finite mean: {finite.float().mean().item()}")
-
-                raise FloatingPointError(name)
-
-        def assert_model_finite(model, where):
-            for name, parameter in model.named_parameters():
-                if not torch.isfinite(parameter).all():
-                    raise FloatingPointError(
-                        f"Non-finite parameter {name} {where}"
-                    )
-
-            for name, buffer in model.named_buffers():
-                if torch.is_floating_point(buffer) and not torch.isfinite(buffer).all():
-                    raise FloatingPointError(
-                        f"Non-finite buffer {name} {where}"
-                    )
 
         assert_finite_tensor("data", data)
         assert_finite_tensor("target", target)
