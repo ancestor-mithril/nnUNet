@@ -1014,8 +1014,8 @@ class nnUNetTrainer(object):
             l = self.loss(output, target)
 
         print("data nan", data.isnan().any())
-        print("target nan", target.isnan().any())
-        print("output nan", output.isnan().any())
+        print("target nan", [x.isnan().any() for x in target])
+        print("output nan", [x.isnan().any() for x in output])
         print("l nan", l.isnan().any())
 
         # sleep(20 / 250)
