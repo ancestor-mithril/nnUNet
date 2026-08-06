@@ -231,6 +231,8 @@ class nnUNetTrainer(object):
         self.was_initialized = False
         self.clip_value = int(os.getenv("CLIP_VALUE", "12"))
 
+        self.context = autocast(self.device.type, enabled=True) if self.device.type == 'cuda' and os.getenv("AUTOGRAD", "1") == "1" else dummy_context()
+
     def initialize(self):
         if not self.was_initialized:
             ## DDP batch size and oversampling can differ between workers and needs adaptation
@@ -1040,26 +1042,23 @@ class nnUNetTrainer(object):
         else:
             target = target.to(self.device, non_blocking=True)
 
+        # assert_model_finite(self.network, "pre-forward")
+
         self.optimizer.zero_grad(set_to_none=True)
         # Autocast can be annoying
         # If the device_type is 'cpu' then it's slow as heck and needs to be disabled.
         # If the device_type is 'mps' then it will complain that mps is not implemented, even if enabled=False is set. Whyyyyyyy. (this is why we don't make use of enabled=False)
         # So autocast will only be active if we have a cuda device.
-        try:
-            assert_model_finite(self.network, "pre-forward")
-        except Exception as e:
-            print(e, ":(", "before forward")
-        context = autocast(self.device.type, enabled=True) if self.device.type == 'cuda' and os.getenv("AUTOGRAD", "1") == "1" else dummy_context()
-        with context:
+        with self.context:
             output = self.network(data)
             # del data
             l = self.loss(output, target)
 
 
-        assert_finite_tensor("data", data)
-        assert_finite_tensor("target", target)
-        assert_finite_tensor("output", output)
-        assert_finite_tensor("l", l)
+        # assert_finite_tensor("data", data)
+        # assert_finite_tensor("target", target)
+        # assert_finite_tensor("output", output)
+        # assert_finite_tensor("l", l)
         # sleep(20 / 250)
 
         if self.grad_scaler is not None:
@@ -1074,11 +1073,6 @@ class nnUNetTrainer(object):
             torch.nn.utils.clip_grad_norm_(self.network.parameters(), self.clip_value)
             self.optimizer.step()
 
-        try:
-            assert_model_finite(self.network, "end")
-        except Exception as e:
-            print(e)
-            print(":(")
         return {'loss': l.detach().cpu().numpy()}
 
     def on_train_epoch_end(self, train_outputs: List[dict]):
