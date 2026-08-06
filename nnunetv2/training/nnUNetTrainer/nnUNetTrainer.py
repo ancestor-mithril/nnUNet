@@ -1,4 +1,5 @@
 import inspect
+import json
 import multiprocessing
 import os
 import shutil
@@ -1028,7 +1029,10 @@ class nnUNetTrainer(object):
         return {'loss': l.detach().cpu().numpy()}
 
     def on_train_epoch_end(self, train_outputs: List[dict]):
+        print(json.dumps(train_outputs, indent=2))
         outputs = collate_outputs(train_outputs)
+        print(json.dumps(outputs, indent=2))
+        print(":(:(")
 
         if self.is_ddp:
             losses_tr = [None for _ in range(dist.get_world_size())]
@@ -1036,6 +1040,8 @@ class nnUNetTrainer(object):
             loss_here = np.vstack(losses_tr).mean()
         else:
             loss_here = np.mean(outputs['loss'])
+
+        print(":(:(")
 
         self.logger.log('train_losses', loss_here, self.current_epoch)
 
@@ -1060,6 +1066,8 @@ class nnUNetTrainer(object):
             output = self.network(data)
             del data
             l = self.loss(output, target)
+
+        # sleep(15 / 250)
 
         # we only need the output with the highest output resolution (if DS enabled)
         if self.enable_deep_supervision:
