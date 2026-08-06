@@ -39,7 +39,7 @@ ENV cont_preproc_path=${{nnUNet_preprocessed}}/Dataset100_A
 ENV cont_model_path=${{nnUNet_results}}/Dataset100_A/${{nnUNet_trainer}}__${{nnUNet_plans}}__${{nnUNet_conf}}
 ENV cont_input_path=/app/input
 ENV cont_output_path=/app/output
-ENV nnUNet_stop_first_epoch=1
+ENV nnUNet_stop_first_epoch=0
 
 WORKDIR /app
 
