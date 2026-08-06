@@ -1013,21 +1013,46 @@ class nnUNetTrainer(object):
             # del data
             l = self.loss(output, target)
 
-        any_print = False
-        if data.isnan().any().item():
-            any_print = True
-            print("data nan")
-        if any([x.isnan().any().item() for x in target]):
-            any_print = True
-            print("target nan", [x.isnan().any().item() for x in target])
-        if any([x.isnan().any().item() for x in output]):
-            any_print = True
-            print("output nan", [x.isnan().any().item() for x in output])
-        if l.isnan().any().item():
-            any_print = True
-            print("l nan")
-        if any_print:
-            print(":(")
+        def assert_finite_tensor(name, x):
+            if isinstance(x, (list, tuple)):
+                for i, value in enumerate(x):
+                    assert_finite_tensor(f"{name}[{i}]", value)
+                return
+
+            if not torch.isfinite(x).all():
+                finite = x[torch.isfinite(x)]
+
+                print(f"\nNON-FINITE: {name}")
+                print(f"shape: {tuple(x.shape)}")
+                print(f"dtype: {x.dtype}")
+                print(f"nan: {torch.isnan(x).sum().item()}")
+                print(f"+inf: {torch.isposinf(x).sum().item()}")
+                print(f"-inf: {torch.isneginf(x).sum().item()}")
+
+                if finite.numel():
+                    print(f"finite min: {finite.min().item()}")
+                    print(f"finite max: {finite.max().item()}")
+                    print(f"finite mean: {finite.float().mean().item()}")
+
+                raise FloatingPointError(name)
+
+        def assert_model_finite(model, where):
+            for name, parameter in model.named_parameters():
+                if not torch.isfinite(parameter).all():
+                    raise FloatingPointError(
+                        f"Non-finite parameter {name} {where}"
+                    )
+
+            for name, buffer in model.named_buffers():
+                if torch.is_floating_point(buffer) and not torch.isfinite(buffer).all():
+                    raise FloatingPointError(
+                        f"Non-finite buffer {name} {where}"
+                    )
+
+        assert_finite_tensor("data", data)
+        assert_finite_tensor("target", target)
+        assert_finite_tensor("output", output)
+        assert_finite_tensor("l", l)
         # sleep(20 / 250)
 
         if self.grad_scaler is not None:
@@ -1041,6 +1066,12 @@ class nnUNetTrainer(object):
             l.backward()
             torch.nn.utils.clip_grad_norm_(self.network.parameters(), self.clip_value)
             self.optimizer.step()
+
+        try:
+            assert_model_finite(self.network, "end")
+        except Exception as e:
+            print(e)
+            print(":(")
         return {'loss': l.detach().cpu().numpy()}
 
     def on_train_epoch_end(self, train_outputs: List[dict]):
@@ -1052,9 +1083,6 @@ class nnUNetTrainer(object):
             loss_here = np.vstack(losses_tr).mean()
         else:
             loss_here = np.mean(outputs['loss'])
-        print(outputs['loss'].tolist())
-
-        print(":(:(")
 
         self.logger.log('train_losses', loss_here, self.current_epoch)
 
