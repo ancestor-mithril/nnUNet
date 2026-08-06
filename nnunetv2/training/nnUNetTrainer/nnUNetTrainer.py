@@ -1013,6 +1013,11 @@ class nnUNetTrainer(object):
             # del data
             l = self.loss(output, target)
 
+        print("data nan", data.isnan().any())
+        print("target nan", target.isnan().any())
+        print("output nan", output.isnan().any())
+        print("l nan", l.isnan().any())
+
         # sleep(20 / 250)
 
         if self.grad_scaler is not None:
@@ -1029,10 +1034,7 @@ class nnUNetTrainer(object):
         return {'loss': l.detach().cpu().numpy()}
 
     def on_train_epoch_end(self, train_outputs: List[dict]):
-        print(json.dumps(serializable(train_outputs), indent=2))
         outputs = collate_outputs(train_outputs)
-        print(json.dumps(serializable(outputs), indent=2))
-        print(":(:(")
 
         if self.is_ddp:
             losses_tr = [None for _ in range(dist.get_world_size())]
@@ -1040,6 +1042,7 @@ class nnUNetTrainer(object):
             loss_here = np.vstack(losses_tr).mean()
         else:
             loss_here = np.mean(outputs['loss'])
+        print(outputs['loss'].tolist())
 
         print(":(:(")
 
