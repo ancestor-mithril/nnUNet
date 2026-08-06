@@ -191,6 +191,7 @@ class nnUNetTrainer(object):
         self.disable_checkpointing = False
 
         self.was_initialized = False
+        self.clip_value = int(os.getenv("CLIP_VALUE", "12"))
 
     def initialize(self):
         if not self.was_initialized:
@@ -1011,15 +1012,18 @@ class nnUNetTrainer(object):
             # del data
             l = self.loss(output, target)
 
+        # sleep(20 / 250)
+
         if self.grad_scaler is not None:
             self.grad_scaler.scale(l).backward()
+            # sleep(20 / 250)
             self.grad_scaler.unscale_(self.optimizer)
-            torch.nn.utils.clip_grad_norm_(self.network.parameters(), 12)
+            torch.nn.utils.clip_grad_norm_(self.network.parameters(), self.clip_value)
             self.grad_scaler.step(self.optimizer)
             self.grad_scaler.update()
         else:
             l.backward()
-            torch.nn.utils.clip_grad_norm_(self.network.parameters(), 12)
+            torch.nn.utils.clip_grad_norm_(self.network.parameters(), self.clip_value)
             self.optimizer.step()
         return {'loss': l.detach().cpu().numpy()}
 
