@@ -1013,11 +1013,21 @@ class nnUNetTrainer(object):
             # del data
             l = self.loss(output, target)
 
-        print("data nan", data.isnan().any())
-        print("target nan", [x.isnan().any() for x in target])
-        print("output nan", [x.isnan().any() for x in output])
-        print("l nan", l.isnan().any())
-
+        any_print = False
+        if data.isnan().any().item():
+            any_print = True
+            print("data nan")
+        if any([x.isnan().any().item() for x in target]):
+            any_print = True
+            print("target nan", [x.isnan().any().item() for x in target])
+        if any([x.isnan().any().item() for x in output]):
+            any_print = True
+            print("output nan", [x.isnan().any().item() for x in output])
+        if l.isnan().any().item():
+            any_print = True
+            print("l nan")
+        if any_print:
+            print(":(")
         # sleep(20 / 250)
 
         if self.grad_scaler is not None:
