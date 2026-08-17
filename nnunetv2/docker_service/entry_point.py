@@ -9,7 +9,7 @@ import SimpleITK as sitk
 import torch.accelerator
 from tqdm import tqdm
 
-num_epochs_range = [100, 250, 500, 750, 1000, 2000, 4000]
+num_epochs_range = [1, 100, 250, 500, 750, 1000, 2000, 4000]
 model_sizes_range = [
     8, 12, 18, 24, 32
 ]
