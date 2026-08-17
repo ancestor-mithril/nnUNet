@@ -51,7 +51,7 @@ RUN mkdir -p /app/input /app/output ${{cont_data_path}} ${{cont_model_path}} ${{
     pip install timed-decorator && \
     pip uninstall nnunetv2 --yes && \
     pip install 'git+https://github.com/ancestor-mithril/nnUNet.git@new' --no-cache-dir && \
-    RUN COMMIT_HASH=$(git ls-remote "https://github.com/ancestor-mithril/nnUNet.git" "refs/heads/new" | awk '{print $1}') && \
+    COMMIT_HASH=$(git ls-remote "https://github.com/ancestor-mithril/nnUNet.git" "refs/heads/new" | awk '{{print $1}}') && \
     echo "$COMMIT_HASH" > /app/COMMIT_HASH
 
 COPY entry_point.py /app
