@@ -9,16 +9,23 @@ Cum o sa fie folosit:
 docker run --rm IMG_NAME props
 ```
 
-Comanda props returneaza path-urile folosite in container, de forma:
+Comanda props returneaza informatiile utile:
 ```
 {
     "DATASET_PATH": "...",
     "PREPROCESSED_PATH": "...",
-    "MODEL_PATH": "..."
+    "MODEL_PATH": "...",
+    "INPUT": "...",
+    "OUTPUT": "...",
+    "OUTPUT": "...",
+    "NUM_EPOCHS_RANGE": "...",
+    "MODEL_SIZES_RANGE": "...",
+    "COMMIT_HASH": "...",
+    "FALLBACK_MODEL": "..."
 }
 ```
 
-Toate acestea vor fi folosite in urmatoarele comenzi sub forma $DATASET_PATH, $PREPROCESSED_PATH, $MDOEL_PATH
+Toate acestea vor fi folosite in urmatoarele comenzi sub forma $DATASET_PATH, $PREPROCESSED_PATH, $MODEL_PATH
 
 1. Preprocessing
 
@@ -65,8 +72,53 @@ docker run --rm --gpus all \
   IMG_NAME train -fold $FOLD -device $DEVICE
 ```
 
+3. Validation
 
-3. Inference
+Validation poate fi facut dupa fiecare training s-a terminat. Validation foloseste exact aceiasi parametrii ca si training-ul, si se face la nivel de fold.
+
+```
+export PATH_TO_DATASET_SERVER=...       # path to dataset folder on server
+export PATH_TO_PREPROCESS_SERVER=...    # path to preprocess folder on server
+export PATH_TO_MODEL_SERVER=...         # path unde a fost salvat modelul antrenat
+
+export FOLD=1                           # poate fi 0, 1, 2, 3, 4 sau all
+export DEVICE=0                         # index GPU, de exemplu 0 sau 1
+
+
+docker run --rm --gpus all \
+  --shm-size=36g \
+  --user $(id -u):$(id -g) \
+  -v $PATH_TO_DATASET_SERVER:$DATASET_PATH:ro \
+  -v $PATH_TO_PREPROCESS_SERVER:$PREPROCESSED_PATH:ro \
+  -v $PATH_TO_MODEL_SERVER:$MODEL_PATH \
+  IMG_NAME validate -fold $FOLD -device $DEVICE
+```
+
+Validarea va scrie un fisier, "$PATH_TO_MODEL_SERVER/fold_$FOLD/validation/results.json". 
+Acest fisier contine metricile pentru modelul respectiv, fold-ul respectiv.
+
+4. Cross-Validation
+
+Cross-Validation poate fi facut doar daca s-a terminat deja validarea FOLD-urilor 0, 1, 2, 3, 4. FOLD-ul "all" este ignorat (nu poate fi inclus in cross-validation).
+Foloseste aceiasi parametrii ca si validation, in afara de FOLD, si nu mai are nevoie de PREPROCESSED_PATH sau DATASET_PATH.
+
+```
+export PATH_TO_MODEL_SERVER=...         # path unde a fost salvat modelul antrenat
+
+export DEVICE=0                         # index GPU, de exemplu 0 sau 1
+
+
+docker run --rm --gpus all \
+  --shm-size=36g \
+  --user $(id -u):$(id -g) \
+  -v $PATH_TO_MODEL_SERVER:$MODEL_PATH \
+  IMG_NAME cross_validate -device $DEVICE
+```
+
+Cross-validarea va scrie un fisier, "$PATH_TO_MODEL_SERVER/final_results.json". 
+Aici se vor afla metricile de cross-validare.
+
+5. Inference
 
 Inferenta trebuie facuta dupa ce Trainingul este gata pt path-ul "PATH_TO_MODEL_SERVER" si fold-ul "FOLD"
 

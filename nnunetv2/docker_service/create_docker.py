@@ -22,7 +22,7 @@ FROM {args.base_docker_image}
 
 ENV nnUNet_dataset=100
 ENV nnUNet_plans=nnUNetResEncUNetLPlans_torchres
-ENV nnUNet_trainer=nnUNetTrainerMuon3en4
+ENV nnUNet_trainer=nnUNetTrainerMuon
 ENV nnUNet_conf=3d_fullres
 ENV nnUNet_step_size=0.5
 ENV nnUNet_disable_tta=0
@@ -50,7 +50,9 @@ RUN mkdir -p /app/input /app/output ${{cont_data_path}} ${{cont_model_path}} ${{
     chmod 777 ${{cont_model_path}} && \
     pip install timed-decorator && \
     pip uninstall nnunetv2 --yes && \
-    pip install 'git+https://github.com/ancestor-mithril/nnUNet.git@new' --no-cache-dir
+    pip install 'git+https://github.com/ancestor-mithril/nnUNet.git@new' --no-cache-dir && \
+    RUN COMMIT_HASH=$(git ls-remote "https://github.com/ancestor-mithril/nnUNet.git" "refs/heads/new" | awk '{print $1}') && \
+    echo "$COMMIT_HASH" > /app/COMMIT_HASH
 
 COPY entry_point.py /app
 
