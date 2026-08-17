@@ -310,7 +310,7 @@ def validate(args):
     json_num_epochs = os.path.join(model_path, "num_epochs.json")
     raw_path = "/app/nnUNet_raw/Dataset100_A"
     labels_json = os.path.join(raw_path, "labels.json")
-        error_msg = (
+    error_msg = (
         f"File {labels_json} is not available or is corrupted.\n"
         """
         Example:
