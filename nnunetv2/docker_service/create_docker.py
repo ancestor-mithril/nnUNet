@@ -64,3 +64,6 @@ ENTRYPOINT ["python", "entry_point.py"]
 
 if __name__ == "__main__":
     entry_point()
+
+# git pull && pip install . && rm ../uaic_docker/* && nnUNetv2_create_docker -docker_app ../uaic_docker/
+# docker build -t uaic_docker:v3 . --no-cache
