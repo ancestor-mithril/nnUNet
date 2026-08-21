@@ -50,7 +50,7 @@ class Timer:
 
     def __enter__(self):
         frame = inspect.currentframe().f_back
-        self.filename = frame.f_code.co_filename
+        self.filename = os.path.basename(frame.f_code.co_filename)
         self.lineno = frame.f_lineno
         self.start = time.time()
         return self
@@ -646,8 +646,7 @@ class nnUNetPredictor(object):
 
             with tqdm(desc=None, total=len(slicers), disable=not self.allow_tqdm) as pbar:
                 while True:
-                    with Timer("queue get"):
-                        item = queue.get()
+                    item = queue.get()
                     if item == 'end':
                         queue.task_done()
                         break
@@ -656,8 +655,7 @@ class nnUNetPredictor(object):
                     with Timer("predict"):
                         rez = self._internal_maybe_mirror_and_predict(workon).to(results_device)
                     if self.use_gaussian:
-                        with Timer("gaussian"):
-                            rez *= gaussian
+                        rez *= gaussian
                     for prediction, sl in zip(rez, batch_sl):
                         with Timer("updating pred"):
                             predicted_logits[sl] += prediction
