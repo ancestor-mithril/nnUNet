@@ -579,7 +579,6 @@ class nnUNetPredictor(object):
                                                   zip((sx, sy, sz), self.configuration_manager.patch_size)]]))
         return slicers
 
-    @torch.inference_mode()
     def _internal_maybe_mirror_and_predict(self, x: torch.Tensor) -> torch.Tensor:
         with Timer("forward"):
             prediction = self.network(x)
