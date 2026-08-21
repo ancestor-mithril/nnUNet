@@ -276,7 +276,7 @@ def train(args):
             json.dump({"num_epochs": args.num_epochs}, f)
     else:
         with open(json_num_epochs, "r") as f:
-            num_epochs = json.load(f)
+            num_epochs = json.load(f)["num_epochs"]
         if num_epochs != args.num_epochs:
             raise RuntimeError(f"Training already started with {num_epochs} epochs in this folder! "
                                f"Resuming a training with {args.num_epochs} epochs is not possible. "
