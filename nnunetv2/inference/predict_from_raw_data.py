@@ -666,8 +666,8 @@ class nnUNetPredictor(object):
                         rez = self._internal_maybe_mirror_and_predict(workon).to(results_device)
                     if self.use_gaussian:
                         rez *= gaussian
-                    for prediction, sl in zip(rez, batch_sl):
-                        with Timer("updating pred"):
+                    with Timer("updating pred"):
+                        for prediction, sl in zip(rez, batch_sl):
                             predicted_logits[sl] += prediction
                             n_predictions[sl[1:]] += gaussian
 
