@@ -581,116 +581,27 @@ class nnUNetPredictor(object):
 
     @torch.inference_mode()
     def _internal_maybe_mirror_and_predict(self, x: torch.Tensor) -> torch.Tensor:
-        mirror_axes = self.allowed_mirroring_axes if self.use_mirroring else None
         with Timer("forward"):
             prediction = self.network(x)
 
-        if mirror_axes is not None:
-            mirror_axes = [m + 2 for m in mirror_axes]
-            axes_combinations = [
-                    c for i in range(len(mirror_axes)) for c in itertools.combinations(mirror_axes, i + 1)
-            ]
+        axes_combinations = self._get_mirror_axes()
+        if axes_combinations:
             with Timer("flip forward"):
                 for axes in axes_combinations:
                     prediction += torch.flip(self.network(torch.flip(x, axes)), axes)
             prediction /= (len(axes_combinations) + 1)
         return prediction
 
-    def _internal_sliding_window_prediction_no_mirroring(self,
-                                            data: torch.Tensor,
-                                            slicers,
-                                            gaussian,
-                                            results_device
-                                            ):
-        predicted_logits = torch.zeros((self.label_manager.num_segmentation_heads, *data.shape[1:]),
-                                       dtype=torch.half,
-                                       device=results_device)
-        n_predictions = torch.zeros(data.shape[1:], dtype=torch.half, device=results_device)
-
-        if not self.allow_tqdm and self.verbose:
-            print(f'running prediction: {len(slicers)} steps')
-
-        for sl in tqdm(slicers, disable=not self.allow_tqdm):
-            with Timer("predict 1"):
-                prediction = self.network(
-                    data[sl].unsqueeze(0).to(self.device)
-                )[0].to(results_device)
-
-            with Timer("updating pred 1"):
-                prediction *= gaussian
-                predicted_logits[sl] += prediction
-                n_predictions[sl[1:]] += gaussian
-
-        return predicted_logits, n_predictions
-
-    def _internal_sliding_window_prediction_for_mirror(self,
-                                                         data: torch.Tensor,
-                                                         slicers,
-                                                         gaussian,
-                                                         results_device
-                                                         ):
-        predicted_logits = torch.zeros((self.label_manager.num_segmentation_heads, *data.shape[1:]),
-                                       dtype=torch.half,
-                                       device=results_device)
-
-        if not self.allow_tqdm and self.verbose:
-            print(f'running prediction: {len(slicers)} steps')
-
-        for sl in tqdm(slicers, disable=not self.allow_tqdm):
-            with Timer("predict 2"):
-                prediction = self.network(
-                    data[sl].unsqueeze(0).to(self.device)
-                )[0].to(results_device)
-
-            with Timer("updating pred 2"):
-                prediction *= gaussian
-                predicted_logits[sl] += prediction
-
-        return predicted_logits
 
     def _get_mirror_axes(self):
         mirror_axes = self.allowed_mirroring_axes if self.use_mirroring else None
         if mirror_axes is not None and len(self.axes_combinations) == 0:
-            mirror_axes = [m + 1 for m in mirror_axes]
+            mirror_axes = [m + 2 for m in mirror_axes]
             self.axes_combinations = [
                 c for i in range(len(mirror_axes)) for c in itertools.combinations(mirror_axes, i + 1)
             ]
 
         return self.axes_combinations
-
-
-    def _internal_sliding_window_manager(self, data: torch.Tensor, slicers, do_on_device: bool = True):
-        results_device = self.device if do_on_device else torch.device('cpu')
-        if self.use_gaussian:
-            gaussian = compute_gaussian(tuple(self.configuration_manager.patch_size), sigma_scale=1. / 8,
-                                        value_scaling_factor=int(os.getenv("value_scaling_factor", "10")),
-                                        device=results_device)
-        else:
-            gaussian = 1
-
-        perf_logger.info(f"Data shape is {data.shape}")
-
-        with Timer("predict first"):
-            predicted_logits, n_predictions = self._internal_sliding_window_prediction_no_mirroring(data, slicers, gaussian, results_device)
-
-        axes_combination = self._get_mirror_axes()
-        if axes_combination:
-            with Timer("predict mirroring"):
-                for axes in axes_combination:
-                    flipped_data = torch.flip(data, axes)
-                    new_predicted_logits = self._internal_sliding_window_prediction_for_mirror(flipped_data, slicers, gaussian, results_device)
-                    predicted_logits += torch.flip(new_predicted_logits, axes)
-                predicted_logits /= (len(self.axes_combinations) + 1)
-
-        predicted_logits /= n_predictions
-        check_for_inf = os.getenv("IGNORE_INF", "0") == "0"
-        perf_logger.info(f"Checking for inf in {predicted_logits.shape}: {check_for_inf}")
-        if check_for_inf and torch.any(torch.isinf(predicted_logits)):
-            raise RuntimeError('Encountered inf in predicted array. Aborting... If this problem persists, '
-                               'reduce value_scaling_factor in compute_gaussian or increase the dtype of '
-                               'predicted_logits to fp32')
-        return predicted_logits
-
 
 
     def _internal_predict_sliding_window_return_logits(self,
@@ -716,22 +627,15 @@ class nnUNetPredictor(object):
             print(f'running prediction: {len(slicers)} steps')
 
         for sl in tqdm(slicers, disable=not self.allow_tqdm):
-            with Timer("create_batch"):
-                workon = data[sl].unsqueeze(0).to(self.device)
             with Timer("predict"):
-                prediction = self._internal_maybe_mirror_and_predict(workon)[0].to(results_device)
-
-            if self.use_gaussian:
-                prediction *= gaussian
+                prediction = self._internal_maybe_mirror_and_predict(data[sl].unsqueeze(0).to(self.device))[0].to(results_device)
 
             with Timer("updating pred"):
+                prediction *= gaussian
                 predicted_logits[sl] += prediction
                 n_predictions[sl[1:]] += gaussian
 
-        # predicted_logits /= n_predictions
-        torch.div(predicted_logits, n_predictions, out=predicted_logits)
-        del n_predictions, prediction, workon
-        gc.collect()
+        predicted_logits /= n_predictions
         # check for infs
         check_for_inf = os.getenv("IGNORE_INF", "0") == "0"
         perf_logger.info(f"Checking for inf in {predicted_logits.shape}: {check_for_inf}")
@@ -767,16 +671,15 @@ class nnUNetPredictor(object):
             if self.perform_everything_on_device and self.device != 'cpu':
                 # we need to try except here because we can run OOM in which case we need to fall back to CPU as a results device
                 try:
-                    predicted_logits = self._internal_sliding_window_manager(data, slicers, self.perform_everything_on_device)
+                    predicted_logits = self._internal_predict_sliding_window_return_logits(data, slicers, self.perform_everything_on_device)
                 except RuntimeError:
                     print(
                         'Prediction on device was unsuccessful, probably due to a lack of memory. Moving results arrays to CPU')
                     empty_cache(self.device)
-                    predicted_logits = self._internal_sliding_window_manager(data, slicers, False)
+                    predicted_logits = self._internal_predict_sliding_window_return_logits(data, slicers, False)
             else:
-                predicted_logits = self._internal_sliding_window_manager(data, slicers, self.perform_everything_on_device)
+                predicted_logits = self._internal_predict_sliding_window_return_logits(data, slicers, self.perform_everything_on_device)
             del data
-            empty_cache(self.device)
             # revert padding
             predicted_logits = predicted_logits[(slice(None), *slicer_revert_padding[1:])]
         return predicted_logits
