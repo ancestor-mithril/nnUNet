@@ -606,35 +606,13 @@ class nnUNetPredictor(object):
                                                        slicers,
                                                        do_on_device: bool = True,
                                                        ):
-        predicted_logits = n_predictions = prediction = gaussian = workon = None
+        predicted_logits = None
+        n_predictions = None
+        gaussian = None
         results_device = self.device if do_on_device else torch.device('cpu')
-
-        def producer(d, slh, q):
-            bs = int(os.getenv("BATCH_SIZE", "1"))
-
-            for i in range(0, len(slh), bs):
-                batch_s = slh[i:i + bs]
-
-                with Timer("create_batch"):
-                    batch = torch.stack(
-                        [d[s] for s in batch_s]
-                    ).to(device=self.device)
-
-                q.put((batch, batch_s))
-            # for s in slh:
-            #     q.put((torch.clone(d[s][None], memory_format=torch.contiguous_format).to(self.device), s))
-            q.put('end')
 
         try:
             empty_cache(self.device)
-
-            # move data to device
-            if self.verbose:
-                print(f'move image to device {results_device}')
-            data = data.to(results_device)
-            queue = Queue(maxsize=1)
-            t = Thread(target=producer, args=(data, slicers, queue))
-            t.start()
 
             # preallocate arrays
             if self.verbose:
@@ -654,30 +632,22 @@ class nnUNetPredictor(object):
             if not self.allow_tqdm and self.verbose:
                 print(f'running prediction: {len(slicers)} steps')
 
-            with tqdm(desc=None, total=len(slicers), disable=not self.allow_tqdm) as pbar:
-                while True:
-                    item = queue.get()
-                    if item == 'end':
-                        queue.task_done()
-                        break
+            for sl in tqdm(slicers, disable=not self.allow_tqdm):
+                with Timer("create_batch"):
+                    workon = data[sl].unsqueeze(0).to(self.device)
+                with Timer("predict"):
+                    prediction = self._internal_maybe_mirror_and_predict(workon)[0].to(results_device)
 
-                    workon, batch_sl = item
-                    with Timer("predict"):
-                        rez = self._internal_maybe_mirror_and_predict(workon).to(results_device)
-                    if self.use_gaussian:
-                        rez *= gaussian
-                    with Timer("updating pred"):
-                        for prediction, sl in zip(rez, batch_sl):
-                            predicted_logits[sl] += prediction
-                            n_predictions[sl[1:]] += gaussian
+                if self.use_gaussian:
+                    prediction *= gaussian
 
-                    queue.task_done()
-                    pbar.update(len(batch_sl))
-            queue.join()
-            t.join()
+                with Timer("updating pred"):
+                    predicted_logits[sl] += prediction
+                    n_predictions[sl[1:]] += gaussian
+
             # predicted_logits /= n_predictions
             torch.div(predicted_logits, n_predictions, out=predicted_logits)
-            del queue, t, n_predictions, prediction, workon
+            del n_predictions, prediction, workon
             gc.collect()
             # check for infs
             check_for_inf = os.getenv("IGNORE_INF", "0") == "0"
@@ -687,7 +657,7 @@ class nnUNetPredictor(object):
                                    'reduce value_scaling_factor in compute_gaussian or increase the dtype of '
                                    'predicted_logits to fp32')
         except Exception as e:
-            del predicted_logits, gaussian
+            del predicted_logits, n_predictions, gaussian
             empty_cache(self.device)
             empty_cache(results_device)
             raise e
