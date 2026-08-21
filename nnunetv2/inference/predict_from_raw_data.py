@@ -83,6 +83,7 @@ class nnUNetPredictor(object):
         self.plans_manager, self.configuration_manager, self.list_of_parameters, self.network, self.dataset_json, \
         self.trainer_name, self.allowed_mirroring_axes, self.label_manager = None, None, None, None, None, None, None, None
 
+        self.already_loaded = False
         self.tile_step_size = tile_step_size
         self.use_gaussian = use_gaussian
         self.use_mirroring = use_mirroring
@@ -510,13 +511,22 @@ class nnUNetPredictor(object):
         torch.set_num_threads(default_num_processes if default_num_processes < n_threads else n_threads)
         prediction = None
 
-        for params in self.list_of_parameters:
-
-            # messing with state dict names...
+        if len(self.list_of_parameters) == 1 and self.already_loaded is False:
+            params = self.list_of_parameters[0]
             if not isinstance(self.network, OptimizedModule):
                 self.network.load_state_dict(params)
             else:
                 self.network._orig_mod.load_state_dict(params)
+            self.already_loaded = True
+
+        for params in self.list_of_parameters:
+
+            if len(self.list_of_parameters) > 1:
+                # messing with state dict names...
+                if not isinstance(self.network, OptimizedModule):
+                    self.network.load_state_dict(params)
+                else:
+                    self.network._orig_mod.load_state_dict(params)
 
             # why not leave prediction on device if perform_everything_on_device? Because this may cause the
             # second iteration to crash due to OOM. Grabbing that with try except cause way more bloated code than
