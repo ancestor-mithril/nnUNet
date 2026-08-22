@@ -166,8 +166,8 @@ class nnUNetPredictor(object):
             perf_logger.info("Using tensorrt. Compiling network")
             self.network = torch_tensorrt.compile(
                 self.network,
-                inputs=[torch_tensorrt.Input(example_input.shape, dtype=torch.float32)],
-                enabled_precisions={torch.float32, torch.float16},
+                inputs=[torch_tensorrt.Input(example_input.shape, dtype=torch.float16)],
+                enabled_precisions={torch.float16},
             )
             perf_logger.info("Compile done")
         elif ('nnUNet_compile' in os.environ.keys()) and (os.environ['nnUNet_compile'].lower() in ('true', '1', 't')) \
@@ -601,12 +601,12 @@ class nnUNetPredictor(object):
             prediction = rez[0]
             for pred, axes in zip(rez[1:], axes_combinations):
                 prediction += torch.flip(pred, axes)
-            prediction /= len(axes_combinations)
+            prediction /= len(axes_combinations) + 1
         return prediction
 
 
     def _internal_maybe_mirror_and_predict(self, x: torch.Tensor) -> torch.Tensor:
-        x = x.unsqueeze(0).to(self.device)
+        x = x.unsqueeze(0).to(device=self.device, dtype=torch.float16)
         with Timer("forward"):
             prediction = self.network(x)
 
