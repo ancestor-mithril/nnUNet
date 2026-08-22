@@ -626,7 +626,6 @@ class nnUNetPredictor(object):
                                                        slicers,
                                                        do_on_device: bool = True,
                                                        ):
-        pred_fn = self._batched_maybe_mirror_and_predict if os.getenv("USE_BATCHED_MIRRORING", "0") == "1" else self._internal_maybe_mirror_and_predict
         results_device = self.device if do_on_device else torch.device('cpu')
 
         predicted_logits = torch.zeros((self.label_manager.num_segmentation_heads, *data.shape[1:]),
@@ -646,7 +645,8 @@ class nnUNetPredictor(object):
 
         for sl in tqdm(slicers, disable=not self.allow_tqdm):
             with Timer("predict"):
-                prediction = pred_fn(data[sl]).to(results_device)
+                # _batched_maybe_mirror_and_predict is slower :(
+                prediction = self._internal_maybe_mirror_and_predict(data[sl]).to(results_device)
 
             with Timer("updating pred"):
                 prediction *= gaussian
