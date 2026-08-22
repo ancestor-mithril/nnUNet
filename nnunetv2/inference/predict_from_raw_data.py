@@ -161,13 +161,16 @@ class nnUNetPredictor(object):
 
         if os.getenv("USE_TENSOR_RT", "0") == "1":
             import torch_tensorrt
+            self.network = self.network.half()
             self.network.eval().cuda()
             example_input = torch.randn(1, num_input_channels, *self.configuration_manager.patch_size).to(self.device)
+            perf_logger.info("Using tensorrt. Compiling network")
             self.network = torch_tensorrt.compile(
                 self.network,
                 inputs=[torch_tensorrt.Input(example_input.shape, dtype=torch.float16)],
                 enabled_precisions={torch.float16},
             )
+            perf_logger.info("Compile done")
         elif ('nnUNet_compile' in os.environ.keys()) and (os.environ['nnUNet_compile'].lower() in ('true', '1', 't')) \
                 and not isinstance(self.network, OptimizedModule):
             print('Using torch.compile')
