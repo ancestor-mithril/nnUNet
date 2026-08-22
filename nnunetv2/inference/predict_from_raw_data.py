@@ -509,6 +509,7 @@ class nnUNetPredictor(object):
         SEE convert_predicted_logits_to_segmentation_with_correct_shape
         """
         n_threads = torch.get_num_threads()
+        perf_logger.info(f"Number of threads: {n_threads} / {default_num_processes}")
         torch.set_num_threads(default_num_processes if default_num_processes < n_threads else n_threads)
         prediction = None
 
@@ -587,7 +588,7 @@ class nnUNetPredictor(object):
             batch = torch.stack(batch).to(self.device)
 
         with Timer("batch forward"):
-            rez = self.network(batch).cpu()
+            rez = self.network(batch)
 
         with Timer("back flips"):
             prediction = rez[0]
@@ -607,7 +608,7 @@ class nnUNetPredictor(object):
             for axes in axes_combinations:
                 prediction += torch.flip(self.network(torch.flip(x, axes)), axes)
             prediction /= (len(axes_combinations) + 1)
-        return prediction[0].cpu()
+        return prediction[0]
 
 
     def _get_mirror_axes(self, dim):
@@ -646,7 +647,7 @@ class nnUNetPredictor(object):
 
         for sl in tqdm(slicers, disable=not self.allow_tqdm):
             with Timer("predict"):
-                prediction = pred_fn(data[sl])
+                prediction = pred_fn(data[sl]).to(results_device)
 
             with Timer("updating pred"):
                 prediction *= gaussian
