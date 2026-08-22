@@ -83,7 +83,6 @@ class nnUNetPredictor(object):
         self.plans_manager, self.configuration_manager, self.list_of_parameters, self.network, self.dataset_json, \
         self.trainer_name, self.allowed_mirroring_axes, self.label_manager = None, None, None, None, None, None, None, None
 
-        self.already_loaded = False
         self.tile_step_size = tile_step_size
         self.use_gaussian = use_gaussian
         self.use_mirroring = use_mirroring
@@ -155,9 +154,24 @@ class nnUNetPredictor(object):
         self.trainer_name = trainer_name
         self.allowed_mirroring_axes = inference_allowed_mirroring_axes
         self.label_manager = plans_manager.get_label_manager(dataset_json)
-        if ('nnUNet_compile' in os.environ.keys()) and (os.environ['nnUNet_compile'].lower() in ('true', '1', 't')) \
+
+        if len(self.list_of_parameters) == 1:
+            params = self.list_of_parameters[0]
+            self.network.load_state_dict(params)
+
+        if os.getenv("USE_TENSOR_RT", "0") == "1":
+            import torch_tensorrt
+            self.network.eval().cuda()
+            example_input = torch.randn(1, num_input_channels, *self.configuration_manager.patch_size).to(self.device)
+            self.network = torch_tensorrt.compile(
+                self.network,
+                inputs=[torch_tensorrt.Input(example_input.shape, dtype=torch.float16)],
+                enabled_precisions={torch.float16},
+            )
+        elif ('nnUNet_compile' in os.environ.keys()) and (os.environ['nnUNet_compile'].lower() in ('true', '1', 't')) \
                 and not isinstance(self.network, OptimizedModule):
             print('Using torch.compile')
+
             self.network = torch.compile(self.network)
 
     def manual_initialization(self, network: nn.Module, plans_manager: PlansManager,
@@ -512,14 +526,6 @@ class nnUNetPredictor(object):
         perf_logger.info(f"Number of threads: {n_threads} / {default_num_processes}")
         torch.set_num_threads(default_num_processes if default_num_processes < n_threads else n_threads)
         prediction = None
-
-        if len(self.list_of_parameters) == 1 and self.already_loaded is False:
-            params = self.list_of_parameters[0]
-            if not isinstance(self.network, OptimizedModule):
-                self.network.load_state_dict(params)
-            else:
-                self.network._orig_mod.load_state_dict(params)
-            self.already_loaded = True
 
         for params in self.list_of_parameters:
 
