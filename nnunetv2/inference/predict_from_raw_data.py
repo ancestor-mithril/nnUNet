@@ -161,7 +161,7 @@ class nnUNetPredictor(object):
 
         if os.getenv("USE_TENSOR_RT", "0") == "1":
             import torch_tensorrt
-            self.network.eval().cuda()
+            self.network = self.network.eval().half().cuda()
             example_input = torch.randn(1, num_input_channels, *self.configuration_manager.patch_size).to(self.device)
             perf_logger.info("Using tensorrt. Compiling network")
             self.network = torch_tensorrt.compile(
