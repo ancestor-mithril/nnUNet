@@ -541,7 +541,6 @@ class nnUNetPredictor(object):
         if len(self.list_of_parameters) > 1:
             prediction /= len(self.list_of_parameters)
 
-        if self.verbose: print('Prediction done')
         torch.set_num_threads(n_threads)
         del data
         return prediction
@@ -776,7 +775,6 @@ class nnUNetPredictor(object):
 
             prediction = self.predict_logits_from_preprocessed_data(torch.from_numpy(data)).cpu()
             del data
-            gc.collect()
 
             if of is not None:
                 export_prediction_from_logits(prediction, data_properties, self.configuration_manager, self.plans_manager,
@@ -871,8 +869,8 @@ def predict_entry_point_modelfolder():
         device = torch.device('cpu')
     elif args.device == 'cuda':
         # multithreading in torch doesn't help nnU-Net if run on GPU
-        torch.set_num_threads(1)
-        torch.set_num_interop_threads(1)
+        # torch.set_num_threads(1)
+        # torch.set_num_interop_threads(1)
         device = torch.device('cuda')
     else:
         device = torch.device('mps')
