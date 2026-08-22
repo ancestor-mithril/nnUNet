@@ -94,6 +94,7 @@ class nnUNetPredictor(object):
         self.device = device
         self.perform_everything_on_device = perform_everything_on_device
         self.axes_combinations = []
+        self.use_half = False
 
     def initialize_from_trained_model_folder(self, model_training_output_dir: str,
                                              use_folds: Union[Tuple[Union[int, str]], None],
@@ -158,11 +159,15 @@ class nnUNetPredictor(object):
         if len(self.list_of_parameters) == 1:
             params = self.list_of_parameters[0]
             self.network.load_state_dict(params)
+            if os.getenv("USE_TENSOR_RT", "0") == "1" or os.getenv("USE_HALF", "0") == "1":
+                self.network = self.network.eval().half().cuda()
+                self.use_half = True
 
-        if os.getenv("USE_TENSOR_RT", "0") == "1":
+        if len(self.list_of_parameters) == 1 and os.getenv("USE_TENSOR_RT", "0") == "1":
             import torch_tensorrt
-            self.network = self.network.eval().half().cuda()
-            example_input = torch.randn(1, num_input_channels, *self.configuration_manager.patch_size).to(self.device)
+            example_input = torch.randn(
+                1, num_input_channels, *self.configuration_manager.patch_size, device=self.device, dtype=torch.float16
+            )
             perf_logger.info("Using tensorrt. Compiling network")
             self.network = torch_tensorrt.compile(
                 self.network,
@@ -528,10 +533,14 @@ class nnUNetPredictor(object):
         perf_logger.info(f"Number of threads: {n_threads} / {default_num_processes}")
         torch.set_num_threads(default_num_processes if default_num_processes < n_threads else n_threads)
         prediction = None
+        external = False
+        if self.use_half:
+            data = data.half()
 
         for params in self.list_of_parameters:
 
             if len(self.list_of_parameters) > 1:
+                external = True
                 # messing with state dict names...
                 if not isinstance(self.network, OptimizedModule):
                     self.network.load_state_dict(params)
@@ -542,9 +551,9 @@ class nnUNetPredictor(object):
             # second iteration to crash due to OOM. Grabbing that with try except cause way more bloated code than
             # this actually saves computation time
             if prediction is None:
-                prediction = self.predict_sliding_window_return_logits(data).to('cpu')
+                prediction = self.predict_sliding_window_return_logits(data, external).to('cpu')
             else:
-                prediction += self.predict_sliding_window_return_logits(data).to('cpu')
+                prediction += self.predict_sliding_window_return_logits(data, external).to('cpu')
 
         if len(self.list_of_parameters) > 1:
             prediction /= len(self.list_of_parameters)
@@ -592,7 +601,7 @@ class nnUNetPredictor(object):
 
         with Timer("prepare flips"):
             batch = [x] + [torch.flip(x, axes) for axes in axes_combinations]
-            batch = torch.stack(batch).to(self.device)
+            batch = torch.stack(batch).to(self.device, non_blocking=True)
 
         with Timer("batch forward"):
             rez = self.network(batch)
@@ -606,7 +615,7 @@ class nnUNetPredictor(object):
 
 
     def _internal_maybe_mirror_and_predict(self, x: torch.Tensor) -> torch.Tensor:
-        x = x.unsqueeze(0).to(device=self.device, dtype=torch.float16)
+        x = x.unsqueeze(0).to(self.device, non_blocking=True)
         with Timer("forward"):
             prediction = self.network(x)
 
@@ -672,16 +681,16 @@ class nnUNetPredictor(object):
         return predicted_logits
 
     @torch.inference_mode()
-    def predict_sliding_window_return_logits(self, input_image: torch.Tensor) \
+    def predict_sliding_window_return_logits(self, input_image: torch.Tensor, external: bool = True) \
             -> Union[np.ndarray, torch.Tensor]:
-        assert isinstance(input_image, torch.Tensor)
-        self.network = self.network.to(self.device)
-        self.network.eval()
+        if external:
+            self.network = self.network.to(self.device)
+            self.network.eval()
 
-        with torch.autocast(self.device.type, enabled=True) if self.device.type == 'cuda' else dummy_context():
-            assert input_image.ndim == 4, 'input_image must be a 4D np.ndarray or torch.Tensor (c, x, y, z)'
+        use_autocast = self.device.type == 'cuda' and not self.use_half
 
-            perf_logger.info(f"Input shape: {input_image.shape}, step_size: {self.tile_step_size}")
+        with torch.autocast(self.device.type) if use_autocast else dummy_context():
+            perf_logger.info(f"Input shape: {input_image.shape} ({input_image.dtype}), step_size: {self.tile_step_size}")
             if self.verbose:
                 print(f'Input shape: {input_image.shape}')
                 print("step_size:", self.tile_step_size)
