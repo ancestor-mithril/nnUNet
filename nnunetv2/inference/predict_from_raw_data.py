@@ -171,7 +171,7 @@ class nnUNetPredictor(object):
             example_input = torch.randn(
                 bs, num_input_channels, *self.configuration_manager.patch_size, device=self.device, dtype=torch.float16
             )
-            perf_logger.info("Using tensorrt. Compiling network")
+            perf_logger.info(f"Using tensorrt. Compiling network with bs {bs}")
             self.network = torch_tensorrt.compile(
                 self.network,
                 inputs=[torch_tensorrt.Input(example_input.shape, dtype=torch.float16)],
@@ -648,7 +648,7 @@ class nnUNetPredictor(object):
                                                        ):
         results_device = self.device if do_on_device else torch.device('cpu')
         pred_fn = self._batched_maybe_mirror_and_predict if os.getenv("BATCHED_MIRROR", "0") == "1" else self._internal_maybe_mirror_and_predict
-
+        print("Using BATCHED_MIRROR", os.getenv("BATCHED_MIRROR", "0"))
         predicted_logits = torch.zeros((self.label_manager.num_segmentation_heads, *data.shape[1:]),
                                        dtype=torch.half,
                                        device=results_device)
