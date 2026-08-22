@@ -579,23 +579,41 @@ class nnUNetPredictor(object):
                                                   zip((sx, sy, sz), self.configuration_manager.patch_size)]]))
         return slicers
 
-    def _internal_maybe_mirror_and_predict(self, x: torch.Tensor) -> torch.Tensor:
-        with Timer("forward"):
-            prediction = self.network(x)
+    def _batched_maybe_mirror_and_predict(self, x: torch.Tensor) -> torch.Tensor:
+        axes_combinations = self._get_mirror_axes(dim=1)
 
-        axes_combinations = self._get_mirror_axes()
-        if axes_combinations:
-            with Timer("flip forward"):
-                for axes in axes_combinations:
-                    prediction += torch.flip(self.network(torch.flip(x, axes)), axes)
-            prediction /= (len(axes_combinations) + 1)
+        with Timer("prepare flips"):
+            batch = [x] + [torch.flip(x, axes) for axes in axes_combinations]
+            batch = torch.stack(batch).to(self.device)
+
+        with Timer("batch forward"):
+            rez = self.network(batch)
+
+        with Timer("back flips"):
+            prediction = rez[0]
+            for pred, axes in zip(rez[1:], axes_combinations):
+                prediction += torch.flip(pred, axes)
+            prediction /= len(axes_combinations)
         return prediction
 
 
-    def _get_mirror_axes(self):
+    def _internal_maybe_mirror_and_predict(self, x: torch.Tensor) -> torch.Tensor:
+        x = x.unsqueeze(0).to(self.device)
+        with Timer("forward"):
+            prediction = self.network(x)
+
+        axes_combinations = self._get_mirror_axes(dim=2)
+        with Timer("flip forward"):
+            for axes in axes_combinations:
+                prediction += torch.flip(self.network(torch.flip(x, axes)), axes)
+        prediction /= (len(axes_combinations) + 1)
+        return prediction[0]
+
+
+    def _get_mirror_axes(self, dim):
         mirror_axes = self.allowed_mirroring_axes if self.use_mirroring else None
         if mirror_axes is not None and len(self.axes_combinations) == 0:
-            mirror_axes = [m + 2 for m in mirror_axes]
+            mirror_axes = [m + dim for m in mirror_axes]
             self.axes_combinations = [
                 c for i in range(len(mirror_axes)) for c in itertools.combinations(mirror_axes, i + 1)
             ]
@@ -608,6 +626,7 @@ class nnUNetPredictor(object):
                                                        slicers,
                                                        do_on_device: bool = True,
                                                        ):
+        pred_fn = self._batched_maybe_mirror_and_predict if os.getenv("USE_BATCHED_MIRRORING", "0") == "1" else self._internal_maybe_mirror_and_predict
         results_device = self.device if do_on_device else torch.device('cpu')
 
         predicted_logits = torch.zeros((self.label_manager.num_segmentation_heads, *data.shape[1:]),
@@ -627,7 +646,7 @@ class nnUNetPredictor(object):
 
         for sl in tqdm(slicers, disable=not self.allow_tqdm):
             with Timer("predict"):
-                prediction = self._internal_maybe_mirror_and_predict(data[sl].unsqueeze(0).to(self.device))[0].to(results_device)
+                prediction = pred_fn(data[sl]).to(results_device)
 
             with Timer("updating pred"):
                 prediction *= gaussian
