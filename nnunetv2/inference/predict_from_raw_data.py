@@ -678,8 +678,10 @@ class nnUNetPredictor(object):
         # check for infs
         check_for_inf = os.getenv("IGNORE_INF", "0") == "0"
         perf_logger.info(f"Checking for inf in {predicted_logits.shape}: {check_for_inf}")
-        if check_for_inf and torch.any(torch.isfinite(predicted_logits)):
-            raise RuntimeError('Encountered inf in predicted array. Aborting... If this problem persists, '
+        if check_for_inf and not torch.all(torch.isfinite(predicted_logits)):
+            raise RuntimeError(f'Encountered inf in predicted array: '
+                               f'isnan: {torch.isnan(predicted_logits)}, isinf: {torch.isinf(predicted_logits)}. '
+                               f'Aborting... If this problem persists, '
                                'reduce value_scaling_factor in compute_gaussian or increase the dtype of '
                                'predicted_logits to fp32')
         return predicted_logits
