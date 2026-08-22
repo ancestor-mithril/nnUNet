@@ -160,10 +160,10 @@ class nnUNetPredictor(object):
             params = self.list_of_parameters[0]
             self.network.load_state_dict(params)
             if os.getenv("USE_TENSOR_RT", "0") == "1" or os.getenv("USE_HALF", "0") == "1":
-                self.network = self.network.eval().half().cuda()
+                self.network = self.network.eval().to(device=self.device, dtype=torch.float16)
                 self.use_half = True
             else:
-                self.network = self.network.eval().cuda()
+                self.network = self.network.eval().to(self.device)
 
         if len(self.list_of_parameters) == 1 and os.getenv("USE_TENSOR_RT", "0") == "1":
             import torch_tensorrt
@@ -678,7 +678,7 @@ class nnUNetPredictor(object):
         # check for infs
         check_for_inf = os.getenv("IGNORE_INF", "0") == "0"
         perf_logger.info(f"Checking for inf in {predicted_logits.shape}: {check_for_inf}")
-        if check_for_inf and torch.any(torch.isinf(predicted_logits)):
+        if check_for_inf and torch.any(torch.isfinite(predicted_logits)):
             raise RuntimeError('Encountered inf in predicted array. Aborting... If this problem persists, '
                                'reduce value_scaling_factor in compute_gaussian or increase the dtype of '
                                'predicted_logits to fp32')
