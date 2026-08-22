@@ -3,6 +3,7 @@ import os
 
 def get_logger(name: str) -> logging.Logger:
     logger = logging.getLogger(name)
+    logger.propagate = False
 
     # Prevent duplicate handlers if called multiple times
     if logger.handlers:
