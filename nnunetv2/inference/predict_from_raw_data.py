@@ -587,7 +587,7 @@ class nnUNetPredictor(object):
             batch = torch.stack(batch).to(self.device)
 
         with Timer("batch forward"):
-            rez = self.network(batch)
+            rez = self.network(batch).cpu()
 
         with Timer("back flips"):
             prediction = rez[0]
@@ -606,8 +606,8 @@ class nnUNetPredictor(object):
         with Timer("flip forward"):
             for axes in axes_combinations:
                 prediction += torch.flip(self.network(torch.flip(x, axes)), axes)
-        prediction /= (len(axes_combinations) + 1)
-        return prediction[0]
+            prediction /= (len(axes_combinations) + 1)
+        return prediction[0].cpu()
 
 
     def _get_mirror_axes(self, dim):
@@ -646,7 +646,7 @@ class nnUNetPredictor(object):
 
         for sl in tqdm(slicers, disable=not self.allow_tqdm):
             with Timer("predict"):
-                prediction = pred_fn(data[sl]).to(results_device)
+                prediction = pred_fn(data[sl])
 
             with Timer("updating pred"):
                 prediction *= gaussian
