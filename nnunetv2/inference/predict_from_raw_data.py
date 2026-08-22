@@ -167,8 +167,9 @@ class nnUNetPredictor(object):
 
         if len(self.list_of_parameters) == 1 and os.getenv("USE_TENSOR_RT", "0") == "1":
             import torch_tensorrt
+            bs = 8 if os.getenv("BATCHED_MIRROR", "0") == "1" else 1
             example_input = torch.randn(
-                1, num_input_channels, *self.configuration_manager.patch_size, device=self.device, dtype=torch.float16
+                bs, num_input_channels, *self.configuration_manager.patch_size, device=self.device, dtype=torch.float16
             )
             perf_logger.info("Using tensorrt. Compiling network")
             self.network = torch_tensorrt.compile(
