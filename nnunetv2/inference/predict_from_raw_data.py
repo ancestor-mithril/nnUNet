@@ -980,9 +980,9 @@ def predict_entry_point():
         torch.set_num_threads(multiprocessing.cpu_count())
         device = torch.device('cpu')
     elif args.device == 'cuda':
-        # multithreading in torch doesn't help nnU-Net if run on GPU
-        torch.set_num_threads(1)
-        torch.set_num_interop_threads(1)
+        # # multithreading in torch doesn't help nnU-Net if run on GPU
+        # torch.set_num_threads(1)
+        # torch.set_num_interop_threads(1)
         device = torch.device('cuda')
     else:
         device = torch.device('mps')
