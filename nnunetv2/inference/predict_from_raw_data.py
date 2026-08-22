@@ -162,6 +162,8 @@ class nnUNetPredictor(object):
             if os.getenv("USE_TENSOR_RT", "0") == "1" or os.getenv("USE_HALF", "0") == "1":
                 self.network = self.network.eval().half().cuda()
                 self.use_half = True
+            else:
+                self.network = self.network.eval().cuda()
 
         if len(self.list_of_parameters) == 1 and os.getenv("USE_TENSOR_RT", "0") == "1":
             import torch_tensorrt
