@@ -37,7 +37,7 @@ def run_command(command, envs):
         return False
 
 
-def try_inference(input_path: str, output_path: str, folds: List[str], use_cuda: bool = False, device_index: int = 0,
+def try_inference(input_path: str, output_path: str, folds: list[str], use_cuda: bool = False, device_index: int = 0,
                   use_best: bool = False):
     fold = " ".join(folds)
     if use_cuda:
