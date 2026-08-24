@@ -13,6 +13,7 @@
 #    limitations under the License.
 import math
 import multiprocessing
+import os
 import shutil
 from time import sleep
 from typing import Tuple
@@ -31,6 +32,7 @@ from nnunetv2.preprocessing.resampling.default_resampling import compute_new_sha
 from nnunetv2.training.dataloading.nnunet_dataset import nnUNetDatasetBlosc2
 from nnunetv2.utilities.dataset_name_id_conversion import maybe_convert_to_dataset_name
 from nnunetv2.utilities.find_class_by_name import recursive_find_python_class
+from nnunetv2.utilities.logging import perf_logger
 from nnunetv2.utilities.plans_handling.plans_handler import PlansManager, ConfigurationManager
 from nnunetv2.utilities.utils import get_filenames_of_train_images_and_targets
 
@@ -46,7 +48,8 @@ class DefaultPreprocessor(object):
                      plans_manager: PlansManager, configuration_manager: ConfigurationManager,
                      dataset_json: Union[dict, str]):
         # let's not mess up the inputs!
-        data = data.astype(np.float32)  # this creates a copy
+        if os.getenv("copy_elision", "0") == "0":
+            data = data.astype(np.float32)  # this creates a copy
         if seg is not None:
             assert data.shape[1:] == seg.shape[1:], "Shape mismatch between image and segmentation. Please fix your dataset and make use of the --verify_dataset_integrity flag to ensure everything is correct"
             seg = np.copy(seg)
@@ -55,7 +58,7 @@ class DefaultPreprocessor(object):
 
         # apply transpose_forward, this also needs to be applied to the spacing!
         data = data.transpose([0, *[i + 1 for i in plans_manager.transpose_forward]])
-        if seg is not None:
+        if has_seg:
             seg = seg.transpose([0, *[i + 1 for i in plans_manager.transpose_forward]])
         original_spacing = [properties['spacing'][i] for i in plans_manager.transpose_forward]
 
@@ -65,7 +68,7 @@ class DefaultPreprocessor(object):
         # this command will generate a segmentation. This is important because of the nonzero mask which we may need
         data, seg, bbox = crop_to_nonzero(data, seg)
         properties['bbox_used_for_cropping'] = bbox
-        # print(data.shape, seg.shape)
+        perf_logger.info(f"Cropping from {shape_before_cropping} to {data.shape} using {bbox}")
         properties['shape_after_cropping_and_before_resampling'] = data.shape[1:]
 
         # resample
@@ -83,11 +86,12 @@ class DefaultPreprocessor(object):
         data = self._normalize(data, seg, configuration_manager,
                                plans_manager.foreground_intensity_properties_per_channel)
 
-        # print('current shape', data.shape[1:], 'current_spacing', original_spacing,
-        #       '\ntarget shape', new_shape, 'target_spacing', target_spacing)
         old_shape = data.shape[1:]
         data = configuration_manager.resampling_fn_data(data, new_shape, original_spacing, target_spacing)
         seg = configuration_manager.resampling_fn_seg(seg, new_shape, original_spacing, target_spacing)
+        perf_logger.info(f"Start resampling from {old_shape} to {new_shape}, "
+                         f"from {original_spacing} to {target_spacing}, "
+                         f"using {configuration_manager.resampling_fn_data}")
         if self.verbose:
             print(f'old shape: {old_shape}, new_shape: {new_shape}, old_spacing: {original_spacing}, '
                   f'new_spacing: {target_spacing}, fn_data: {configuration_manager.resampling_fn_data}')

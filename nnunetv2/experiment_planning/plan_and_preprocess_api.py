@@ -89,6 +89,8 @@ def plan_experiments(dataset_ids: List[int], experiment_planner_class_name: str 
     experiment_planner = recursive_find_python_class(join(nnunetv2.__path__[0], "experiment_planning"),
                                                      experiment_planner_class_name,
                                                      current_module="nnunetv2.experiment_planning")
+    print(f"Using {experiment_planner} for {experiment_planner_class_name}")
+    print(f"Using overwrite for plans: {overwrite_plans_name}")
     plans_identifier = None
     for d in dataset_ids:
         _, plans_identifier = plan_experiment_dataset(d, experiment_planner, gpu_memory_target_in_gb,

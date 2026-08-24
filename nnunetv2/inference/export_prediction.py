@@ -1,3 +1,5 @@
+import gc
+import os
 from typing import Union, List
 
 import numpy as np
@@ -8,7 +10,16 @@ from batchgenerators.utilities.file_and_folder_operations import load_json, save
 from nnunetv2.configuration import default_num_processes
 from nnunetv2.training.dataloading.nnunet_dataset import nnUNetDatasetBlosc2
 from nnunetv2.utilities.label_handling.label_handling import LabelManager
+from nnunetv2.utilities.logging import perf_logger
 from nnunetv2.utilities.plans_handling.plans_handler import PlansManager, ConfigurationManager
+
+
+def get_segmentation_and_probabilities(predicted_logits, label_manager: LabelManager, return_probabilities: bool):
+    if not return_probabilities:
+        # this has a faster computation path becasue we can skip the softmax in regular (not region based) trainig
+        return label_manager.convert_logits_to_segmentation(predicted_logits), None
+    predicted_probabilities = label_manager.apply_inference_nonlin(predicted_logits)
+    return label_manager.convert_probabilities_to_segmentation(predicted_probabilities), predicted_probabilities
 
 
 def convert_predicted_logits_to_segmentation_with_correct_shape(predicted_logits: Union[torch.Tensor, np.ndarray],
@@ -27,19 +38,40 @@ def convert_predicted_logits_to_segmentation_with_correct_shape(predicted_logits
         len(configuration_manager.spacing) == \
         len(properties_dict['shape_after_cropping_and_before_resampling']) else \
         [spacing_transposed[0], *configuration_manager.spacing]
-    predicted_logits = configuration_manager.resampling_fn_probabilities(predicted_logits,
-                                            properties_dict['shape_after_cropping_and_before_resampling'],
-                                            current_spacing,
-                                            [properties_dict['spacing'][i] for i in plans_manager.transpose_forward])
-    # return value of resampling_fn_probabilities can be ndarray or Tensor but that does not matter because
-    # apply_inference_nonlin will convert to torch
-    if not return_probabilities:
-        # this has a faster computation path becasue we can skip the softmax in regular (not region based) trainig
-        segmentation = label_manager.convert_logits_to_segmentation(predicted_logits)
+
+    low_memory_resampling = os.getenv('nn_resampling_nn', '0') == "1"
+    perf_logger.info(f"Using low_memory_resampling: {low_memory_resampling}")
+    if not low_memory_resampling:
+        perf_logger.info(f"Resampling logits from {predicted_logits.shape} "
+                         f"to {properties_dict['shape_after_cropping_and_before_resampling']}")
+        predicted_logits = configuration_manager.resampling_fn_probabilities(predicted_logits,
+                                                properties_dict['shape_after_cropping_and_before_resampling'],
+                                                current_spacing,
+                                                [properties_dict['spacing'][i] for i in plans_manager.transpose_forward])
+        perf_logger.info(f"Converting logits {predicted_logits.shape} to segmentation")
+        segmentation, predicted_probabilities = get_segmentation_and_probabilities(
+            predicted_logits, label_manager, return_probabilities)
+        del predicted_logits
     else:
-        predicted_probabilities = label_manager.apply_inference_nonlin(predicted_logits)
-        segmentation = label_manager.convert_probabilities_to_segmentation(predicted_probabilities)
-    del predicted_logits
+        device = torch.device(os.getenv('nn_resample_device', 'cpu'))
+        perf_logger.info(f"Resampling on {device}")
+        predicted_logits = predicted_logits.to(device=device)
+        perf_logger.info(f"get segmentation for {predicted_logits.shape}")
+        gc.collect()
+        segmentation, predicted_probabilities = get_segmentation_and_probabilities(
+            predicted_logits, label_manager, return_probabilities)
+        del predicted_logits
+        perf_logger.info(f"cast segmentation {segmentation.shape} from {segmentation.dtype} to bfloat16")
+        segmentation = segmentation[None, None].to(dtype=torch.bfloat16)
+        gc.collect()
+        perf_logger.info(f"Start interpolate for {segmentation.shape}")
+        segmentation = torch.nn.functional.interpolate(
+            segmentation,
+            properties_dict['shape_after_cropping_and_before_resampling'],
+            mode='nearest-exact',
+            antialias=False
+        )[0, 0].to(torch.int16).cpu()
+        perf_logger.info("End interpolate")
 
     # put segmentation in bbox (revert cropping)
     segmentation_reverted_cropping = np.zeros(properties_dict['shape_before_cropping'],

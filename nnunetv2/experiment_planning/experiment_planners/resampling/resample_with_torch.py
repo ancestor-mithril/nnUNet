@@ -64,10 +64,29 @@ class nnUNetPlannerResEncL_torchres(nnUNetPlannerResEncL):
         return resampling_fn, resampling_fn_kwargs
 
 
+class nnUNetResEncUNetLPlans_torchres(nnUNetPlannerResEncL_torchres):
+    pass
+
+
+class nnUNetResEncUNetLPlans_torchres_8(nnUNetPlannerResEncL_torchres):
+    def __init__(self, dataset_name_or_id: Union[str, int],
+                 gpu_memory_target_in_gb: float = 8,
+                 preprocessor_name: str = 'DefaultPreprocessor', plans_name: str = 'nnUNetResEncUNetLPlans_torchres_8',
+                 overwrite_target_spacing: Union[List[float], Tuple[float, ...]] = None,
+                 suppress_transpose: bool = False):
+        super().__init__(dataset_name_or_id, gpu_memory_target_in_gb, preprocessor_name, plans_name,
+                         overwrite_target_spacing, suppress_transpose)
+
+
+class nnUNetPlannerResEncL_torchres_8(nnUNetResEncUNetLPlans_torchres_8):
+    pass
+
+
 class nnUNetPlannerResEncL_torchres_sepz(nnUNetPlannerResEncL):
     def __init__(self, dataset_name_or_id: Union[str, int],
                  gpu_memory_target_in_gb: float = 24,
-                 preprocessor_name: str = 'DefaultPreprocessor', plans_name: str = 'nnUNetResEncUNetLPlans_torchres_sepz',
+                 preprocessor_name: str = 'DefaultPreprocessor',
+                 plans_name: str = 'nnUNetResEncUNetLPlans_torchres_sepz',
                  overwrite_target_spacing: Union[List[float], Tuple[float, ...]] = None,
                  suppress_transpose: bool = False):
         super().__init__(dataset_name_or_id, gpu_memory_target_in_gb, preprocessor_name, plans_name,

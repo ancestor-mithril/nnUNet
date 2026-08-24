@@ -1,4 +1,6 @@
 from __future__ import annotations
+
+import os
 from time import time
 from typing import Union, List, Tuple, Type
 
@@ -6,12 +8,15 @@ import numpy as np
 import torch
 from acvl_utils.cropping_and_padding.bounding_boxes import bounding_box_to_slice, insert_crop_into_image
 from batchgenerators.utilities.file_and_folder_operations import join
+from tqdm import trange
 
 import nnunetv2
 from nnunetv2.utilities.find_class_by_name import recursive_find_python_class
 from nnunetv2.utilities.helpers import softmax_helper_dim0
 
 from typing import TYPE_CHECKING
+
+from nnunetv2.utilities.logging import perf_logger
 
 # see https://adamj.eu/tech/2021/05/13/python-type-hints-how-to-fix-circular-imports/
 if TYPE_CHECKING:
@@ -135,7 +140,6 @@ class LabelManager(object):
 
         with torch.no_grad():
             # softmax etc is not implemented for half
-            logits = logits.float()
             probabilities = self.inference_nonlin(logits)
 
         return probabilities
@@ -175,10 +179,22 @@ class LabelManager(object):
             is_numpy = isinstance(predicted_probabilities, np.ndarray)
             if not is_numpy:
                 predicted_probabilities = predicted_probabilities.numpy()
-            segmentation = predicted_probabilities.argmax(0)
+
+            seg_dtype =np.int8 if predicted_probabilities.shape[0] < 255 else np.int16
+            seg_shape = predicted_probabilities.shape[1:]
+            perf_logger.info(f"pre-allocating segmentation with {seg_shape} and {seg_dtype}")
+            segmentation = np.empty(seg_shape, dtype=seg_dtype)
+            perf_logger.info(f"Start argmax for {predicted_probabilities.shape}")
+            if os.getenv("use_sliding_softmax", "0") == "1":
+                div_factor = int(os.getenv("sliding_softmax", "50"))
+                for i in trange(int(predicted_probabilities.shape[1] / div_factor) + 1, desc="Argmax"):
+                    predicted_probabilities[:, i * div_factor: (i + 1) * div_factor].argmax(
+                        0, out=segmentation[i * div_factor: (i + 1) * div_factor])
+            else:
+                predicted_probabilities.argmax(0, out=segmentation)
+            perf_logger.info("Finished argmax")
             if not is_numpy:
                 segmentation = torch.from_numpy(segmentation)
-
         return segmentation
 
     @torch.inference_mode()

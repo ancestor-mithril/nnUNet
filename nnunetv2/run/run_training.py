@@ -199,7 +199,8 @@ def run_training(dataset_name_or_id: Union[str, int],
 
         assert not (continue_training and only_run_validation), f'Cannot set --c and --val flag at the same time. Dummy.'
 
-        maybe_load_checkpoint(nnunet_trainer, continue_training, only_run_validation, pretrained_weights)
+        if os.getenv("EXIT_AFTER_SPLIT", "0") == "0":
+            maybe_load_checkpoint(nnunet_trainer, continue_training, only_run_validation, pretrained_weights)
 
         if torch.cuda.is_available():
             cudnn.deterministic = False
@@ -210,7 +211,10 @@ def run_training(dataset_name_or_id: Union[str, int],
 
         if val_with_best:
             nnunet_trainer.load_checkpoint(join(nnunet_trainer.output_folder, 'checkpoint_best.pth'))
-        nnunet_trainer.perform_actual_validation(export_validation_probabilities)
+        if os.getenv("DO_VALIDATION", "0") == "1":
+            nnunet_trainer.perform_actual_validation(export_validation_probabilities)
+        else:
+            print("Validation not done. To run validation, set the environment: DO_VALIDATION=1")
 
 
 def run_training_entry():
