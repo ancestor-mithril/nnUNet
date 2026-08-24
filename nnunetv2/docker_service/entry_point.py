@@ -37,8 +37,9 @@ def run_command(command, envs):
         return False
 
 
-def try_inference(input_path: str, output_path: str, fold: str, use_cuda: bool = False, device_index: int = 0,
+def try_inference(input_path: str, output_path: str, folds: List[str], use_cuda: bool = False, device_index: int = 0,
                   use_best: bool = False):
+    fold = " ".join(folds)
     if use_cuda:
         print(f"Using cuda device {device_index} for inference!")
     else:
@@ -75,21 +76,26 @@ def try_inference(input_path: str, output_path: str, fold: str, use_cuda: bool =
 
 def inference(args):
     model_path = "/app/nnUNet_results/Dataset100_A/nnUNetTrainerMuon__nnUNetResEncUNetLPlans_torchres__3d_fullres"
-    fold_path = os.path.join(model_path, f"fold_{args.fold}")
-    model_checkpoint = os.path.join(fold_path, f"checkpoint_final.pth")
-    use_best = False
-    if not os.path.isdir(args.input):
-        raise FileNotFoundError(f"Folder {args.input} is not available")
-    if not os.path.isdir(model_path):
-        raise FileNotFoundError(f"Folder {model_path} is not available")
-    if not os.path.isdir(fold_path):
-        raise FileNotFoundError(f"Fold {fold_path} not available, please train the model first")
-    if not os.path.isfile(model_checkpoint):
-        print(f"Model checkpoint {model_checkpoint} not available")
-        model_checkpoint = os.path.join(fold_path, f"checkpoint_best.pth")
-        use_best = True
+    if args.fold == "ensemble":
+        folds = ["0", "1", "2", "3", "4"]
+    else:
+        folds = [args.fold]
+    for fold in folds:
+        fold_path = os.path.join(model_path, f"fold_{args.fold}")
+        model_checkpoint = os.path.join(fold_path, f"checkpoint_final.pth")
+        use_best = False
+        if not os.path.isdir(args.input):
+            raise FileNotFoundError(f"Folder {args.input} is not available")
+        if not os.path.isdir(model_path):
+            raise FileNotFoundError(f"Folder {model_path} is not available")
+        if not os.path.isdir(fold_path):
+            raise FileNotFoundError(f"Fold {fold_path} not available, please train the model first")
         if not os.path.isfile(model_checkpoint):
-            raise FileNotFoundError(f"Model checkpoint {model_checkpoint} not available, please train the model first")
+            print(f"Model checkpoint {model_checkpoint} not available")
+            model_checkpoint = os.path.join(fold_path, f"checkpoint_best.pth")
+            use_best = True
+            if not os.path.isfile(model_checkpoint):
+                raise FileNotFoundError(f"Model checkpoint {model_checkpoint} not available, please train the model first")
 
     files = glob.glob(os.path.join(args.input, "*_0000.nii.gz"))
     if len(files) == 0:
@@ -98,10 +104,10 @@ def inference(args):
         raise FileNotFoundError(f"Folder {args.output} is not available")
 
     print(f"Cuda Available: {torch.cuda.is_available()}")
-    succeeded = try_inference(args.input, args.output, args.fold, use_cuda=True, device_index=args.device,
+    succeeded = try_inference(args.input, args.output, folds, use_cuda=True, device_index=args.device,
                               use_best=use_best)
     if not succeeded:
-        succeeded = try_inference(args.input, args.output, use_cuda=False, use_best=use_best)
+        succeeded = try_inference(args.input, args.output, folds, use_cuda=False, use_best=use_best)
         if not succeeded:
             print("Inference failed. Check the logs for the error")
             raise RuntimeError("Inference failed")
