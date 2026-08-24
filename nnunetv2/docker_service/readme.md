@@ -120,14 +120,15 @@ Aici se vor afla metricile de cross-validare.
 
 5. Inference
 
-Inferenta trebuie facuta dupa ce Trainingul este gata pt path-ul "PATH_TO_MODEL_SERVER" si fold-ul "FOLD"
+Inferenta trebuie facuta dupa ce Trainingul este gata pt path-ul "PATH_TO_MODEL_SERVER" si fold-ul "FOLD".
+Inference poate primi si varianta "ensemble" ca si fold, doar ca are nevoie de trainingul gata pentru toate fold-urile 0, 1, 2, 3, 4
 
 ```
 export PATH_TO_MODEL_SERVER=...     # path unde exista modelul antrenat
 export PATH_TO_INPUT_SERVER=...     # path catre folderul cu input-uri Nifti
 export PATH_TO_OUTPUT_SERVER=...    # path catre folderul unde se vor scrie predictiile
 
-export FOLD=1                       # poate fi 0, 1, 2, 3, 4 sau all
+export FOLD=1                       # poate fi 0, 1, 2, 3, 4, all sau ensemble
 export DEVICE=0                     # index GPU, de exemplu 0 sau 1
 
 
@@ -137,6 +138,19 @@ docker run --rm --gpus all \
   -v $PATH_TO_OUTPUT_SERVER:/app/output \
   -v $PATH_TO_MODEL_SERVER:$MODEL_PATH:ro \
   IMG_NAME inference -fold $FOLD -device $DEVICE
+
+# Ensemble inference with all 5 folds:
+export FOLD=ensemble
+export DEVICE=0                     # index GPU, de exemplu 0 sau 1
+
+
+docker run --rm --gpus all \
+  --user $(id -u):$(id -g) \
+  -v $PATH_TO_INPUT_SERVER:/app/input:ro \
+  -v $PATH_TO_OUTPUT_SERVER:/app/output \
+  -v $PATH_TO_MODEL_SERVER:$MODEL_PATH:ro \
+  IMG_NAME inference -fold $FOLD -device $DEVICE
+
 ```
 
 INPUT trebuie sa fie un folder cu pacienti in format Nifti.  eg: 4_0000.nii.gz
