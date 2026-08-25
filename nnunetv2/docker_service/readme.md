@@ -108,7 +108,7 @@ PATH_TO_MODEL_SERVER=...         # path unde a fost salvat modelul antrenat
 DEVICE=0                         # index GPU, de exemplu 0 sau 1
 
 
-docker run --rm --gpus all \
+docker run --rm \
   --shm-size=36g \
   --user $(id -u):$(id -g) \
   -v PATH_TO_MODEL_SERVER:MODEL_PATH \
