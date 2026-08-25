@@ -25,7 +25,7 @@ Comanda props returneaza informatiile utile:
 }
 ```
 
-Toate acestea vor fi folosite in urmatoarele comenzi sub forma $DATASET_PATH, $PREPROCESSED_PATH, $MODEL_PATH
+Toate acestea vor fi folosite in urmatoarele comenzi sub forma DATASET_PATH, PREPROCESSED_PATH, MODEL_PATH
 
 1. Preprocessing
 
@@ -37,8 +37,8 @@ export PATH_TO_PREPROCESS_SERVER = ... (path to preprocess folder on server)
 
 docker run --rm --gpus all \
   --user $(id -u):$(id -g) \
-  -v $PATH_TO_DATASET_SERVER:$DATASET_PATH \
-  -v $PATH_TO_PREPROCESS_SERVER:$PREPROCESSED_PATH \
+  -v PATH_TO_DATASET_SERVER:DATASET_PATH \
+  -v PATH_TO_PREPROCESS_SERVER:PREPROCESSED_PATH \
   IMG_NAME preprocess
 ```
 
@@ -52,7 +52,7 @@ PATH_TO_DATASET_SERVER nu trebuie sa fie read-only, pentru ca in timpul preproce
 
 2. Training
 
-Trainingul trebuie facut dupa ce Preprocessing e gata pt path-ul $PATH_TO_PREPROCESS_SERVER.
+Trainingul trebuie facut dupa ce Preprocessing e gata pt path-ul PATH_TO_PREPROCESS_SERVER.
 
 ```
 export PATH_TO_DATASET_SERVER=...       # path to dataset folder on server
@@ -66,10 +66,10 @@ export DEVICE=0                         # index GPU, de exemplu 0 sau 1
 docker run --rm --gpus all \
   --shm-size=36g \
   --user $(id -u):$(id -g) \
-  -v $PATH_TO_DATASET_SERVER:$DATASET_PATH:ro \
-  -v $PATH_TO_PREPROCESS_SERVER:$PREPROCESSED_PATH:ro \
-  -v $PATH_TO_MODEL_SERVER:$MODEL_PATH \
-  IMG_NAME train -fold $FOLD -device $DEVICE
+  -v PATH_TO_DATASET_SERVER:DATASET_PATH:ro \
+  -v PATH_TO_PREPROCESS_SERVER:PREPROCESSED_PATH:ro \
+  -v PATH_TO_MODEL_SERVER:MODEL_PATH \
+  IMG_NAME train -fold FOLD -device DEVICE
 ```
 
 3. Validation
@@ -87,14 +87,14 @@ export DEVICE=0                         # index GPU, de exemplu 0 sau 1
 
 docker run --rm --gpus all \
   --shm-size=36g \
-  --user $(id -u):$(id -g) \
-  -v $PATH_TO_DATASET_SERVER:$DATASET_PATH:ro \
-  -v $PATH_TO_PREPROCESS_SERVER:$PREPROCESSED_PATH:ro \
-  -v $PATH_TO_MODEL_SERVER:$MODEL_PATH \
-  IMG_NAME validate -fold $FOLD -device $DEVICE
+  --user (id -u):(id -g) \
+  -v PATH_TO_DATASET_SERVER:DATASET_PATH:ro \
+  -v PATH_TO_PREPROCESS_SERVER:PREPROCESSED_PATH:ro \
+  -v PATH_TO_MODEL_SERVER:MODEL_PATH \
+  IMG_NAME validate -fold FOLD -device DEVICE
 ```
 
-Validarea va scrie un fisier, "$PATH_TO_MODEL_SERVER/fold_$FOLD/validation/results.json". 
+Validarea va scrie un fisier, "PATH_TO_MODEL_SERVER/fold_FOLD/validation/results.json". 
 Acest fisier contine metricile pentru modelul respectiv, fold-ul respectiv.
 
 4. Cross-Validation
@@ -111,11 +111,11 @@ export DEVICE=0                         # index GPU, de exemplu 0 sau 1
 docker run --rm --gpus all \
   --shm-size=36g \
   --user $(id -u):$(id -g) \
-  -v $PATH_TO_MODEL_SERVER:$MODEL_PATH \
-  IMG_NAME cross_validate -device $DEVICE
+  -v PATH_TO_MODEL_SERVER:MODEL_PATH \
+  IMG_NAME cross_validate -device DEVICE
 ```
 
-Cross-validarea va scrie un fisier, "$PATH_TO_MODEL_SERVER/final_results.json". 
+Cross-validarea va scrie un fisier, "PATH_TO_MODEL_SERVER/final_results.json". 
 Aici se vor afla metricile de cross-validare.
 
 5. Inference
@@ -134,22 +134,22 @@ export DEVICE=0                     # index GPU, de exemplu 0 sau 1
 
 docker run --rm --gpus all \
   --user $(id -u):$(id -g) \
-  -v $PATH_TO_INPUT_SERVER:/app/input:ro \
-  -v $PATH_TO_OUTPUT_SERVER:/app/output \
-  -v $PATH_TO_MODEL_SERVER:$MODEL_PATH:ro \
-  IMG_NAME inference -fold $FOLD -device $DEVICE
+  -v PATH_TO_INPUT_SERVER:/app/input:ro \
+  -v PATH_TO_OUTPUT_SERVER:/app/output \
+  -v PATH_TO_MODEL_SERVER:MODEL_PATH:ro \
+  IMG_NAME inference -fold FOLD -device DEVICE
 
 # Ensemble inference with all 5 folds:
 export FOLD=ensemble
-export DEVICE=0                     # index GPU, de exemplu 0 sau 1
+export DEVICE=0
 
 
 docker run --rm --gpus all \
   --user $(id -u):$(id -g) \
-  -v $PATH_TO_INPUT_SERVER:/app/input:ro \
-  -v $PATH_TO_OUTPUT_SERVER:/app/output \
-  -v $PATH_TO_MODEL_SERVER:$MODEL_PATH:ro \
-  IMG_NAME inference -fold $FOLD -device $DEVICE
+  -v PATH_TO_INPUT_SERVER:/app/input:ro \
+  -v PATH_TO_OUTPUT_SERVER:/app/output \
+  -v PATH_TO_MODEL_SERVER:MODEL_PATH:ro \
+  IMG_NAME inference -fold FOLD -device DEVICE
 
 ```
 

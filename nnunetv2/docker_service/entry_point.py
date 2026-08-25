@@ -15,18 +15,6 @@ model_sizes_range = [
 ]
 
 
-def mean_dicts(dicts):
-    n = len(dicts)
-
-    return {
-        k1: {
-            k2: sum(d[k1][k2] for d in dicts) / n
-            for k2 in dicts[0][k1]
-        }
-        for k1 in dicts[0]
-    }
-
-
 def run_command(command, envs):
     command = command.strip()
     try:
@@ -81,9 +69,8 @@ def inference(args):
     else:
         folds = [args.fold]
     for fold in folds:
-        fold_path = os.path.join(model_path, f"fold_{args.fold}")
+        fold_path = os.path.join(model_path, f"fold_{fold}")
         model_checkpoint = os.path.join(fold_path, f"checkpoint_final.pth")
-        use_best = False
         if not os.path.isdir(args.input):
             raise FileNotFoundError(f"Folder {args.input} is not available")
         if not os.path.isdir(model_path):
@@ -91,11 +78,7 @@ def inference(args):
         if not os.path.isdir(fold_path):
             raise FileNotFoundError(f"Fold {fold_path} not available, please train the model first")
         if not os.path.isfile(model_checkpoint):
-            print(f"Model checkpoint {model_checkpoint} not available")
-            model_checkpoint = os.path.join(fold_path, f"checkpoint_best.pth")
-            use_best = True
-            if not os.path.isfile(model_checkpoint):
-                raise FileNotFoundError(f"Model checkpoint {model_checkpoint} not available, please train the model first")
+            raise FileNotFoundError(f"Model checkpoint {model_checkpoint} not available, please train the model first")
 
     files = glob.glob(os.path.join(args.input, "*_0000.nii.gz"))
     if len(files) == 0:
@@ -104,10 +87,9 @@ def inference(args):
         raise FileNotFoundError(f"Folder {args.output} is not available")
 
     print(f"Cuda Available: {torch.cuda.is_available()}")
-    succeeded = try_inference(args.input, args.output, folds, use_cuda=True, device_index=args.device,
-                              use_best=use_best)
+    succeeded = try_inference(args.input, args.output, folds, use_cuda=True, device_index=args.device)
     if not succeeded:
-        succeeded = try_inference(args.input, args.output, folds, use_cuda=False, use_best=use_best)
+        succeeded = try_inference(args.input, args.output, folds, use_cuda=False)
         if not succeeded:
             print("Inference failed. Check the logs for the error")
             raise RuntimeError("Inference failed")
@@ -307,7 +289,8 @@ def train(args):
     if not succeeded:
         print("Training failed. Check the logs for the error")
         raise RuntimeError("Training failed")
-        
+    validate(args)
+
 
 def validate(args):
     preprocess_path = os.getenv("cont_preproc_path")
@@ -357,17 +340,16 @@ def validate(args):
     model_path = "/app/nnUNet_results/Dataset100_A/nnUNetTrainerMuon__nnUNetResEncUNetLPlans_torchres__3d_fullres"
     fold_path = os.path.join(model_path, f"fold_{args.fold}")
     model_checkpoint = os.path.join(fold_path, f"checkpoint_final.pth")
-    use_best = False
     if not os.path.isdir(model_path):
         raise FileNotFoundError(f"Folder {model_path} is not available")
     if not os.path.isdir(fold_path):
         raise FileNotFoundError(f"Fold {fold_path} not available, please train the model first")
     if not os.path.isfile(model_checkpoint):
-        print(f"Model checkpoint {model_checkpoint} not available")
-        model_checkpoint = os.path.join(fold_path, f"checkpoint_best.pth")
-        use_best = True
-        if not os.path.isfile(model_checkpoint):
-            raise FileNotFoundError(f"Model checkpoint {model_checkpoint} not available, please train the model first")
+        raise FileNotFoundError(f"Model checkpoint {model_checkpoint} not available, please train the model first")
+
+    validation_path = os.path.join(fold_path, "validation")
+    validation_done_path = os.path.join(validation_path, "done")
+    validation_done = os.path.isfile(validation_done_path)
 
     envs = {
         "NUM_EPOCHS": str(args.num_epochs),
@@ -386,12 +368,14 @@ def validate(args):
         f"{args.fold} "
     )
 
-    succeeded = run_command(command, envs)
-    if not succeeded:
-        print("Validation failed during inference. Check the logs for the error")
-        raise RuntimeError("Validation failed during inference")
+    if not validation_done:
+        succeeded = run_command(command, envs)
+        if not succeeded:
+            print("Validation failed during inference. Check the logs for the error")
+            raise RuntimeError("Validation failed during inference")
+        with open(validation_done_path, "w") as f:
+            f.write(str(succeeded))
 
-    validation_path = os.path.join(fold_path, "validation")
     labels_tr = os.path.join(raw_path, "labelsTr")
     results_path = os.path.join(validation_path, "results.json")
     labels_mapping = json.dumps(labels).replace("\"", ",")
@@ -412,11 +396,34 @@ def validate(args):
     print(f"Validation metrics written to {results_path}")
 
 
+def aggregate_results(dicts):
+    return {
+        "folds": {
+            str(i): d
+            for i, d in enumerate(dicts)
+        },
+        "mean": {
+            k1: {
+                k2: float(np.mean([d[k1][k2] for d in dicts]))
+                for k2 in dicts[0][k1]
+            }
+            for k1 in dicts[0]
+        },
+        "std": {
+            k1: {
+                k2: float(np.std([d[k1][k2] for d in dicts]))
+                for k2 in dicts[0][k1]
+            }
+            for k1 in dicts[0]
+        },
+    }
+
+
 def cross_validate(args):
     all_results = []
     model_path = "/app/nnUNet_results/Dataset100_A/nnUNetTrainerMuon__nnUNetResEncUNetLPlans_torchres__3d_fullres"
-    for i in ["0", "1", "2", "3", "4"]:
-        fold_path = os.path.join(model_path, f"fold_{args.fold}")
+    for fold in ["0", "1", "2", "3", "4"]:
+        fold_path = os.path.join(model_path, f"fold_{fold}")
         validation_path = os.path.join(fold_path, "validation")
         results_path = os.path.join(validation_path, "results.json")
 
@@ -426,7 +433,7 @@ def cross_validate(args):
             raise FileNotFoundError(f"Fold {fold_path} not available, please train the model first")
         if not os.path.isdir(validation_path):
             raise FileNotFoundError(f"Validation folder {validation_path} not available, please validate the model first")
-        if not os.path.isdir(results_path):
+        if not os.path.isfile(results_path):
             raise FileNotFoundError(f"Results {results_path} not available, please validate the model first")
         with open(results_path, "r") as f:
             results = json.load(f)
@@ -436,10 +443,10 @@ def cross_validate(args):
             "Global dice": results["Global dice"],
         }
         all_results.append(metrics)
-    
+
     final_results_path = os.path.join(model_path, "final_results.json")
     with open(final_results_path, "w") as f:
-        json.dump(mean_dicts(all_results), f, indent=4)
+        json.dump(aggregate_results(all_results), f, indent=4)
     print(f"Cross-Validation metrics written to {final_results_path}")
 
 
