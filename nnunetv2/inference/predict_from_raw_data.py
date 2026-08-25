@@ -76,6 +76,9 @@ class nnUNetPredictor(object):
                  verbose: bool = False,
                  verbose_preprocessing: bool = False,
                  allow_tqdm: bool = True):
+        self.keep_model_on_cpu = False
+        self.networks = []
+        self.use_tensor_rt = False
         self.verbose = verbose
         self.verbose_preprocessing = verbose_preprocessing
         self.allow_tqdm = allow_tqdm
@@ -156,33 +159,47 @@ class nnUNetPredictor(object):
         self.allowed_mirroring_axes = inference_allowed_mirroring_axes
         self.label_manager = plans_manager.get_label_manager(dataset_json)
 
-        if len(self.list_of_parameters) == 1:
-            params = self.list_of_parameters[0]
-            self.network.load_state_dict(params)
-            if os.getenv("USE_TENSOR_RT", "0") == "1" or os.getenv("USE_HALF", "0") == "1":
-                self.network = self.network.eval().to(device=self.device, dtype=torch.float16)
-                self.use_half = True
+        if os.getenv("USE_HALF", "0") == "1":
+            self.use_half = True
+        if os.getenv("USE_TENSOR_RT", "0") == "1":
+            self.use_tensor_rt = True
+            self.use_half = True
+        use_compile = ('nnUNet_compile' in os.environ.keys()) and (os.environ['nnUNet_compile'].lower() in ('true', '1', 't')) and not isinstance(self.network, OptimizedModule)
+
+        self.networks = []
+        self.keep_model_on_cpu = len(self.list_of_parameters) > 1 and not self.use_tensor_rt
+        for i in range(len(self.list_of_parameters)):
+            params = self.list_of_parameters[i]
+            network = deepcopy(self.network)
+            network.load_state_dict(params)
+            network.eval()
+            if self.use_tensor_rt or self.use_half:
+                network = network.to(device=self.device, dtype=torch.float16)
             else:
-                self.network = self.network.eval().to(self.device)
+                network = network.to(self.device)
 
-        if len(self.list_of_parameters) == 1 and os.getenv("USE_TENSOR_RT", "0") == "1":
-            import torch_tensorrt
-            bs = 8 if os.getenv("BATCHED_MIRROR", "0") == "1" else 1
-            example_input = torch.randn(
-                bs, num_input_channels, *self.configuration_manager.patch_size, device=self.device, dtype=torch.float16
-            )
-            perf_logger.info(f"Using tensorrt. Compiling network with bs {bs}")
-            self.network = torch_tensorrt.compile(
-                self.network,
-                inputs=[torch_tensorrt.Input(example_input.shape, dtype=torch.float16)],
-                enabled_precisions={torch.float16},
-            )
-            perf_logger.info("Compile done")
-        elif ('nnUNet_compile' in os.environ.keys()) and (os.environ['nnUNet_compile'].lower() in ('true', '1', 't')) \
-                and not isinstance(self.network, OptimizedModule):
-            print('Using torch.compile')
+            if self.use_tensor_rt:
+                import torch_tensorrt
+                bs = (1 + len(self._get_mirror_axes(dim=1))) if os.getenv("BATCHED_MIRROR", "0") == "1" else 1
+                input_shape = (bs, num_input_channels, *self.configuration_manager.patch_size)
+                perf_logger.info(f"Using tensorrt. Compiling network with bs {bs}")
+                network = torch_tensorrt.compile(
+                    network,
+                    inputs=[
+                        torch_tensorrt.Input(shape=input_shape, dtype=torch.float16)
+                    ],
+                    enabled_precisions={torch.float16},
+                )
+                perf_logger.info("Compile done")
+            elif use_compile:
+                network = torch.compile(network)
+                print('Using torch.compile')
+            if self.keep_model_on_cpu:
+                network = network.cpu()
+            self.networks.append(network)
+        del self.network
+        self.network = self.networks[0]
 
-            self.network = torch.compile(self.network)
 
     def manual_initialization(self, network: nn.Module, plans_manager: PlansManager,
                               configuration_manager: ConfigurationManager, parameters: Optional[List[dict]],
@@ -536,27 +553,22 @@ class nnUNetPredictor(object):
         perf_logger.info(f"Number of threads: {n_threads} / {default_num_processes}")
         torch.set_num_threads(default_num_processes if default_num_processes < n_threads else n_threads)
         prediction = None
-        external = False
         if self.use_half:
             data = data.half()
 
-        for params in self.list_of_parameters:
+        for i in range(len(self.list_of_parameters)):
+            self.network = self.networks[i]
+            if self.keep_model_on_cpu:
+                self.network = self.network.to(self.device)
 
-            if len(self.list_of_parameters) > 1:
-                external = True
-                # messing with state dict names...
-                if not isinstance(self.network, OptimizedModule):
-                    self.network.load_state_dict(params)
-                else:
-                    self.network._orig_mod.load_state_dict(params)
-
-            # why not leave prediction on device if perform_everything_on_device? Because this may cause the
-            # second iteration to crash due to OOM. Grabbing that with try except cause way more bloated code than
-            # this actually saves computation time
+            current_prediction = self.predict_sliding_window_return_logits(data).cpu()
             if prediction is None:
-                prediction = self.predict_sliding_window_return_logits(data, external).to('cpu')
+                prediction = current_prediction
             else:
-                prediction += self.predict_sliding_window_return_logits(data, external).to('cpu')
+                prediction += current_prediction
+
+            if self.keep_model_on_cpu:
+                self.network = self.network.cpu()
 
         if len(self.list_of_parameters) > 1:
             prediction /= len(self.list_of_parameters)
@@ -781,7 +793,7 @@ class nnUNetPredictor(object):
         if output_filename_truncated is None:
             output_filename_truncated = [None] * len(list_of_lists_or_source_folder)
         if seg_from_prev_stage_files is None:
-            seg_from_prev_stage_files = [None] * len(seg_from_prev_stage_files)
+            seg_from_prev_stage_files = [None] * len(list_of_lists_or_source_folder)
 
         ret = []
         for li, of, sps in zip(list_of_lists_or_source_folder, output_filename_truncated, seg_from_prev_stage_files):
