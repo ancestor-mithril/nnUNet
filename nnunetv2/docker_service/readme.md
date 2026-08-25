@@ -32,8 +32,8 @@ Toate acestea vor fi folosite in urmatoarele comenzi sub forma DATASET_PATH, PRE
 Pentru preprocessing sunt necesare:
 
 ```
-export PATH_TO_DATASET_SERVER = ... (path to dataset folder on server)
-export PATH_TO_PREPROCESS_SERVER = ... (path to preprocess folder on server)
+PATH_TO_DATASET_SERVER = ... (path to dataset folder on server)
+PATH_TO_PREPROCESS_SERVER = ... (path to preprocess folder on server)
 
 docker run --rm --gpus all \
   --user $(id -u):$(id -g) \
@@ -55,12 +55,12 @@ PATH_TO_DATASET_SERVER nu trebuie sa fie read-only, pentru ca in timpul preproce
 Trainingul trebuie facut dupa ce Preprocessing e gata pt path-ul PATH_TO_PREPROCESS_SERVER.
 
 ```
-export PATH_TO_DATASET_SERVER=...       # path to dataset folder on server
-export PATH_TO_PREPROCESS_SERVER=...    # path to preprocess folder on server
-export PATH_TO_MODEL_SERVER=...         # path unde se va salva modelul antrenat
+PATH_TO_DATASET_SERVER=...       # path to dataset folder on server
+PATH_TO_PREPROCESS_SERVER=...    # path to preprocess folder on server
+PATH_TO_MODEL_SERVER=...         # path unde se va salva modelul antrenat
 
-export FOLD=1                           # poate fi 0, 1, 2, 3, 4 sau all
-export DEVICE=0                         # index GPU, de exemplu 0 sau 1
+FOLD=1                           # poate fi 0, 1, 2, 3, 4 sau all
+DEVICE=0                         # index GPU, de exemplu 0 sau 1
 
 
 docker run --rm --gpus all \
@@ -77,12 +77,12 @@ docker run --rm --gpus all \
 Validation poate fi facut dupa fiecare training s-a terminat. Validation foloseste exact aceiasi parametrii ca si training-ul, si se face la nivel de fold.
 
 ```
-export PATH_TO_DATASET_SERVER=...       # path to dataset folder on server
-export PATH_TO_PREPROCESS_SERVER=...    # path to preprocess folder on server
-export PATH_TO_MODEL_SERVER=...         # path unde a fost salvat modelul antrenat
+PATH_TO_DATASET_SERVER=...       # path to dataset folder on server
+PATH_TO_PREPROCESS_SERVER=...    # path to preprocess folder on server
+PATH_TO_MODEL_SERVER=...         # path unde a fost salvat modelul antrenat
 
-export FOLD=1                           # poate fi 0, 1, 2, 3, 4 sau all
-export DEVICE=0                         # index GPU, de exemplu 0 sau 1
+FOLD=1                           # poate fi 0, 1, 2, 3, 4 sau all
+DEVICE=0                         # index GPU, de exemplu 0 sau 1
 
 
 docker run --rm --gpus all \
@@ -103,9 +103,9 @@ Cross-Validation poate fi facut doar daca s-a terminat deja validarea FOLD-urilo
 Foloseste aceiasi parametrii ca si validation, in afara de FOLD, si nu mai are nevoie de PREPROCESSED_PATH sau DATASET_PATH.
 
 ```
-export PATH_TO_MODEL_SERVER=...         # path unde a fost salvat modelul antrenat
+PATH_TO_MODEL_SERVER=...         # path unde a fost salvat modelul antrenat
 
-export DEVICE=0                         # index GPU, de exemplu 0 sau 1
+DEVICE=0                         # index GPU, de exemplu 0 sau 1
 
 
 docker run --rm --gpus all \
@@ -124,24 +124,12 @@ Inferenta trebuie facuta dupa ce Trainingul este gata pt path-ul "PATH_TO_MODEL_
 Inference poate primi si varianta "ensemble" ca si fold, doar ca are nevoie de trainingul gata pentru toate fold-urile 0, 1, 2, 3, 4
 
 ```
-export PATH_TO_MODEL_SERVER=...     # path unde exista modelul antrenat
-export PATH_TO_INPUT_SERVER=...     # path catre folderul cu input-uri Nifti
-export PATH_TO_OUTPUT_SERVER=...    # path catre folderul unde se vor scrie predictiile
+PATH_TO_MODEL_SERVER=...     # path unde exista modelul antrenat
+PATH_TO_INPUT_SERVER=...     # path catre folderul cu input-uri Nifti
+PATH_TO_OUTPUT_SERVER=...    # path catre folderul unde se vor scrie predictiile
 
-export FOLD=1                       # poate fi 0, 1, 2, 3, 4, all sau ensemble
-export DEVICE=0                     # index GPU, de exemplu 0 sau 1
-
-
-docker run --rm --gpus all \
-  --user $(id -u):$(id -g) \
-  -v PATH_TO_INPUT_SERVER:/app/input:ro \
-  -v PATH_TO_OUTPUT_SERVER:/app/output \
-  -v PATH_TO_MODEL_SERVER:MODEL_PATH:ro \
-  IMG_NAME inference -fold FOLD -device DEVICE
-
-# Ensemble inference with all 5 folds:
-export FOLD=ensemble
-export DEVICE=0
+FOLD=1                       # poate fi 0, 1, 2, 3, 4, all sau ensemble
+DEVICE=0                     # index GPU, de exemplu 0 sau 1
 
 
 docker run --rm --gpus all \
@@ -150,7 +138,34 @@ docker run --rm --gpus all \
   -v PATH_TO_OUTPUT_SERVER:/app/output \
   -v PATH_TO_MODEL_SERVER:MODEL_PATH:ro \
   IMG_NAME inference -fold FOLD -device DEVICE
+```
 
+Inferenta cu "all" => doar atunci cand "all" a fost antrenat
+```
+FOLD=all
+DEVICE=0
+
+
+docker run --rm --gpus all \
+  --user $(id -u):$(id -g) \
+  -v PATH_TO_INPUT_SERVER:/app/input:ro \
+  -v PATH_TO_OUTPUT_SERVER:/app/output \
+  -v PATH_TO_MODEL_SERVER:MODEL_PATH:ro \
+  IMG_NAME inference -fold FOLD -device DEVICE
+```
+
+Inferenta de tip ansamblu => doar atunci cand au fost antrenate toate foldurile: "0", "1", "2", "3", "4"
+```
+FOLD=ensemble
+DEVICE=0
+
+
+docker run --rm --gpus all \
+  --user $(id -u):$(id -g) \
+  -v PATH_TO_INPUT_SERVER:/app/input:ro \
+  -v PATH_TO_OUTPUT_SERVER:/app/output \
+  -v PATH_TO_MODEL_SERVER:MODEL_PATH:ro \
+  IMG_NAME inference -fold FOLD -device DEVICE
 ```
 
 INPUT trebuie sa fie un folder cu pacienti in format Nifti.  eg: 4_0000.nii.gz
