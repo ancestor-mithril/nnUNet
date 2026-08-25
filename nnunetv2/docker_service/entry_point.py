@@ -33,7 +33,10 @@ def try_inference(input_path: str, output_path: str, folds: list[str], use_cuda:
     else:
         print(f"Using cpu for inference")
 
-    envs = {**os.environ}
+    envs = {
+        "USE_HALF": "1",
+        **os.environ
+    }
     if use_cuda:
         envs["CUDA_VISIBLE_DEVICES"] = str(device_index)
 
