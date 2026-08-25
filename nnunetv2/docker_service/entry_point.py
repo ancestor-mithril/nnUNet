@@ -456,6 +456,19 @@ def cross_validate(args):
 def props(_):
     with open("/app/COMMIT_HASH", "r") as f:
         commit_hash = f.read().strip()
+
+    try:
+        nvidia_driver_version = subprocess.check_output(
+            [
+                "nvidia-smi",
+                "--query-gpu=driver_version",
+                "--format=csv,noheader",
+            ],
+            text=True,
+        ).strip().splitlines()[0]
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        nvidia_driver_version = None
+
     properties = {
         "DATASET_PATH": os.getenv("cont_data_path"),
         "PREPROCESSED_PATH": os.getenv("cont_preproc_path"),
@@ -465,8 +478,13 @@ def props(_):
         "NUM_EPOCHS_RANGE": num_epochs_range,
         "MODEL_SIZES_RANGE": model_sizes_range,
         "COMMIT_HASH": commit_hash,
+        "TORCH_VERSION": torch.__version__,
+        "CUDA_VERSION": torch.version.cuda,
+        "NVIDIA_DRIVER_VERSION": nvidia_driver_version,
+        "CUDA_AVAILABLE": torch.cuda.is_available(),
         "FALLBACK_MODEL": "/archive/data/nnUNet_results/Dataset313_Carotide_more_AiPAD/nnUNetTrainerMuonNesterov3en4_500__nnUNetResEncUNetLPlans_torchres__3d_fullres"
     }
+
     print(json.dumps(properties, indent=4))
 
 
