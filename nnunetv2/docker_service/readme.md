@@ -112,10 +112,11 @@ docker run --rm --gpus all \
   --shm-size=36g \
   --user $(id -u):$(id -g) \
   -v PATH_TO_MODEL_SERVER:MODEL_PATH \
+  -v PATH_TO_OUTPUT_SERVER:/app/output \
   IMG_NAME cross_validate -device DEVICE
 ```
 
-Cross-validarea va scrie un fisier, "PATH_TO_MODEL_SERVER/final_results.json". 
+Cross-validarea va scrie un fisier, "PATH_TO_OUTPUT_SERVER/final_results.json". 
 Aici se vor afla metricile de cross-validare.
 
 5. Inference

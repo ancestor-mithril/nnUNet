@@ -66,7 +66,7 @@ def try_inference(input_path: str, output_path: str, folds: list[str], use_cuda:
 
 
 def inference(args):
-    model_path = "/app/nnUNet_results/Dataset100_A/nnUNetTrainerMuon__nnUNetResEncUNetLPlans_torchres__3d_fullres"
+    model_path = os.getenv("cont_model_path")
     if args.fold == "ensemble":
         folds = ["0", "1", "2", "3", "4"]
     else:
@@ -142,10 +142,10 @@ def pre_preprocess(labels, original_labels, labels_tr):
 
 
 def preprocess(args):
-    raw_path = "/app/nnUNet_raw/Dataset100_A"
+    raw_path = os.getenv("cont_data_path")
     images_tr = os.path.join(raw_path, "imagesTr")
     original_labels = os.path.join(raw_path, "labels")
-    preprocess_path = "/app/nnUNet_preprocessed/Dataset100_A"
+    preprocess_path = os.getenv("cont_preproc_path")
     labels_json = os.path.join(raw_path, "labels.json")
     dataset_json = os.path.join(raw_path, "dataset.json")
 
@@ -300,7 +300,7 @@ def validate(args):
     model_path = os.getenv("cont_model_path")
     dataset_json = os.path.join(preprocess_path, "dataset.json")
     json_num_epochs = os.path.join(model_path, "num_epochs.json")
-    raw_path = "/app/nnUNet_raw/Dataset100_A"
+    raw_path = os.getenv("cont_data_path")
     labels_json = os.path.join(raw_path, "labels.json")
     error_msg = (
         f"File {labels_json} is not available or is corrupted.\n"
@@ -340,7 +340,7 @@ def validate(args):
                                f"Validating a training with {args.num_epochs} epochs is not possible. "
                                f"Use a different folder when validating the model with {args.num_epochs} epochs.")
 
-    model_path = "/app/nnUNet_results/Dataset100_A/nnUNetTrainerMuon__nnUNetResEncUNetLPlans_torchres__3d_fullres"
+    model_path = os.getenv("cont_model_path")
     fold_path = os.path.join(model_path, f"fold_{args.fold}")
     model_checkpoint = os.path.join(fold_path, f"checkpoint_final.pth")
     if not os.path.isdir(model_path):
@@ -424,7 +424,10 @@ def aggregate_results(dicts):
 
 def cross_validate(args):
     all_results = []
-    model_path = "/app/nnUNet_results/Dataset100_A/nnUNetTrainerMuon__nnUNetResEncUNetLPlans_torchres__3d_fullres"
+    model_path = os.getenv("cont_model_path")
+    output = os.getenv("cont_output_path")
+    if not os.path.isdir(output):
+        raise FileNotFoundError(f"Folder {output} is not available")
     for fold in ["0", "1", "2", "3", "4"]:
         fold_path = os.path.join(model_path, f"fold_{fold}")
         validation_path = os.path.join(fold_path, "validation")
@@ -447,7 +450,7 @@ def cross_validate(args):
         }
         all_results.append(metrics)
 
-    final_results_path = os.path.join(model_path, "final_results.json")
+    final_results_path = os.path.join(output, "final_results.json")
     with open(final_results_path, "w") as f:
         json.dump(aggregate_results(all_results), f, indent=4)
     print(f"Cross-Validation metrics written to {final_results_path}")
@@ -498,7 +501,7 @@ def main():
     parser_inference = subparsers.add_parser("inference", help="Do inference")
     parser_inference.add_argument("-fold", type=str, help="Fold", default="0")
     parser_inference.add_argument("-device", type=int, help="CUDA device index", default=0)
-    parser_inference.set_defaults(func=inference, input="/app/input", output="/app/output")
+    parser_inference.set_defaults(func=inference, input=os.getenv("cont_input_path"), output=os.getenv("cont_output_path"))
 
     parser_preprocess = subparsers.add_parser("preprocess", help="Do preprocessing")
     parser_preprocess.add_argument("-num_workers", type=int, default=4,
