@@ -667,8 +667,16 @@ class nnUNetPredictor(object):
         n_predictions = torch.zeros(data.shape[1:], dtype=torch.half, device=results_device)
 
         if self.use_gaussian:
+            value_scaling_factor = int(os.getenv("value_scaling_factor", "10"))
+            if self.tile_step_size <= 0.3:
+                if value_scaling_factor == 10:
+                    value_scaling_factor = 2
+                else:
+                    perf_logger.info(f"Dividing value_scaling_factor {value_scaling_factor} by 5")
+                    value_scaling_factor /= 5
+            perf_logger.info(f"Using value_scaling_factor {value_scaling_factor}")
             gaussian = compute_gaussian(tuple(self.configuration_manager.patch_size), sigma_scale=1. / 8,
-                                        value_scaling_factor=int(os.getenv("value_scaling_factor", "10")),
+                                        value_scaling_factor=value_scaling_factor,
                                         device=results_device)
         else:
             gaussian = 1
