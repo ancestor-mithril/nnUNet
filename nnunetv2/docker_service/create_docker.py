@@ -28,8 +28,10 @@ ENV nnUNet_step_size=0.5
 ENV nnUNet_disable_tta=0
 
 ENV copy_elision=1
-ENV IGNORE_INF=1
+# We should not ignore inf
+ENV IGNORE_INF=0
 ENV PERF_LOGGER=1
+ENV num_val_iterations_per_epoch=1
 
 ENV nnUNet_raw=/app/nnUNet_raw
 ENV nnUNet_results=/app/nnUNet_results
