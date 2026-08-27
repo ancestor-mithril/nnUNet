@@ -187,7 +187,7 @@ class nnUNetTrainer(object):
         self.oversample_foreground_percent = 0.33
         self.probabilistic_oversampling = False
         self.num_iterations_per_epoch = 250
-        self.num_val_iterations_per_epoch = 50
+        self.num_val_iterations_per_epoch = int(os.getenv("num_val_iterations_per_epoch", "10"))
         self.num_epochs = int(os.getenv("NUM_EPOCHS", "1000"))
         self.current_epoch = 0
         self.enable_deep_supervision = True
