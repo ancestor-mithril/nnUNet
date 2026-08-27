@@ -380,7 +380,7 @@ def validate(args):
 
     labels_tr = os.path.join(raw_path, "labelsTr")
     results_path = os.path.join(validation_path, "results.json")
-    labels_mapping = json.dumps(labels).replace("\"", ",")
+    labels_mapping = json.dumps(labels).replace("\"", "'")
     command = (
         f"dice_score_3d "
         f"{labels_tr} "
