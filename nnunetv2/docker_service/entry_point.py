@@ -364,7 +364,6 @@ def validate(args):
         "nnUNetv2_train "
         f"-p {envs['nnUNet_plans']} "
         f"-tr {envs['nnUNet_trainer']} "
-        f"--c "
         f"--val "
         f"{envs['nnUNet_dataset']} "
         f"{envs['nnUNet_conf']} "
