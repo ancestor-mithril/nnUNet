@@ -334,7 +334,7 @@ def validate(args):
         raise FileNotFoundError(f"File {json_num_epochs} is not available. Run training first")
     else:
         with open(json_num_epochs, "r") as f:
-            num_epochs = json.load(f)
+            num_epochs = json.load(f)["num_epochs"]
         if num_epochs != args.num_epochs:
             raise RuntimeError(f"Training was done with {num_epochs} epochs in this folder! "
                                f"Validating a training with {args.num_epochs} epochs is not possible. "
