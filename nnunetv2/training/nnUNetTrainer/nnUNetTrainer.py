@@ -737,12 +737,17 @@ class nnUNetTrainer(object):
             mt_gen_train = SingleThreadedAugmenter(dl_tr, None)
             mt_gen_val = SingleThreadedAugmenter(dl_val, None)
         else:
+            val_proc = max(1, allowed_num_processes // 2)
+            if self.num_val_iterations_per_epoch == 1:
+                val_proc = 1
+            elif self.num_val_iterations_per_epoch == 10:
+                val_proc = min(val_proc, 4)
             mt_gen_train = NonDetMultiThreadedAugmenter(data_loader=dl_tr, transform=None,
                                                         num_processes=allowed_num_processes,
                                                         num_cached=max(6, allowed_num_processes // 2), seeds=None,
                                                         pin_memory=self.device.type == 'cuda', wait_time=0.002)
             mt_gen_val = NonDetMultiThreadedAugmenter(data_loader=dl_val,
-                                                      transform=None, num_processes=max(1, allowed_num_processes // 2),
+                                                      transform=None, num_processes=val_proc,
                                                       num_cached=max(3, allowed_num_processes // 4), seeds=None,
                                                       pin_memory=self.device.type == 'cuda',
                                                       wait_time=0.002)
