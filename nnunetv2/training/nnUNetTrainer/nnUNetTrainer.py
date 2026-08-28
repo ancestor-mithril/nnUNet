@@ -444,6 +444,10 @@ class nnUNetTrainer(object):
             self.oversample_foreground_percent = oversample_percent
 
     def _build_loss(self):
+        ce_kwargs = {}
+        n = int(os.getenv("NN_CLASS_WEIGHTS_LEN", "0"))
+        if n > 0:
+            ce_kwargs["weight"] = torch.tensor([float(os.getenv(f"NN_CLASS_WEIGHTS_{i}", "1")) for i in range(n)])
         if self.label_manager.has_regions:
             loss = DC_and_BCE_loss({},
                                    {'batch_dice': self.configuration_manager.batch_dice,
@@ -452,7 +456,7 @@ class nnUNetTrainer(object):
                                    dice_class=MemoryEfficientSoftDiceLoss)
         else:
             loss = DC_and_CE_loss({'batch_dice': self.configuration_manager.batch_dice,
-                                   'smooth': 1e-5, 'do_bg': False, 'ddp': self.is_ddp}, {}, weight_ce=1, weight_dice=1,
+                                   'smooth': 1e-5, 'do_bg': False, 'ddp': self.is_ddp}, ce_kwargs=ce_kwargs, weight_ce=1, weight_dice=1,
                                   ignore_label=self.label_manager.ignore_label, dice_class=MemoryEfficientSoftDiceLoss)
 
         if self._do_i_compile():

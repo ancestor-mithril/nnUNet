@@ -9,7 +9,18 @@ import SimpleITK as sitk
 import torch.accelerator
 from tqdm import tqdm
 
-num_epochs_range = [1, 100, 250, 500, 750, 1000, 2000, 4000]
+num_epochs_range = [
+    1,
+    100,
+    250,
+    500,
+    "500_wl1",
+    750,
+    1000,
+    "1000_wl1",
+    2000,
+    4000
+]
 model_sizes_range = [
     8, 12, 18, 24, 32
 ]
@@ -248,12 +259,51 @@ def preprocess(args):
         print("Split creation failed. Check the logs for the error")
         raise RuntimeError("Split creation failed")
 
+def get_num_epochs(num_epochs):
+    print(f"Using {num_epochs} epochs")
+    parts = None
+    if "_" in num_epochs:
+        parts = num_epochs.split("_")
+        num_epochs = int(parts[0])
+    else:
+        num_epochs = int(num_epochs)
+    return num_epochs, parts
+
+def validate_num_epochs(num_epochs, num_epochs_path, save=False):
+    if save and not os.path.isfile(num_epochs_path):
+        with open(num_epochs_path, "w") as f:
+            json.dump({"num_epochs": num_epochs}, f)
+        return
+    with open(num_epochs_path, "r") as f:
+        loaded_num_epochs = json.load(f)["num_epochs"]
+    if loaded_num_epochs != num_epochs:
+        raise RuntimeError(f"Training already started with {loaded_num_epochs} epochs in this folder! "
+                           f"Resuming a training with {num_epochs} epochs is not possible. "
+                           f"Use a different folder when training with {num_epochs} epochs.")
+
+
+def handle_wl1(dataset_json, envs):
+    with open(dataset_json, "r") as f:
+        labels = json.load(f)["labels"]
+    envs["NN_CLASS_WEIGHTS_LEN"] = str(len(labels))
+    found_target = False
+    for i, label in enumerate(labels):
+        if label == "tromboza":
+            found_target = True
+            envs[f"NN_CLASS_WEIGHTS_{i}"] = str(len(labels))
+        else:
+            envs[f"NN_CLASS_WEIGHTS_{i}"] = "1"
+    if not found_target:
+        print(f"WARNING! Target not found in {labels}. Using last one ({labels[-1]} as the target for wl1.")
+        envs[f"NN_CLASS_WEIGHTS_{len(labels) - 1}"] = str(len(labels))
+
 
 def train(args):
     preprocess_path = os.getenv("cont_preproc_path")
     model_path = os.getenv("cont_model_path")
     dataset_json = os.path.join(preprocess_path, "dataset.json")
     json_num_epochs = os.path.join(model_path, "num_epochs.json")
+    num_epochs, parts = get_num_epochs(args.num_epochs)
 
     if not os.path.isdir(preprocess_path):
         raise FileNotFoundError(f"Folder {preprocess_path} is not available. Run preprocessing first!")
@@ -262,22 +312,20 @@ def train(args):
     if not os.path.isfile(dataset_json):
         raise FileNotFoundError(f"File {dataset_json} is not available. Run preprocessing first")
 
-    if not os.path.isfile(json_num_epochs):
-        with open(json_num_epochs, "w") as f:
-            json.dump({"num_epochs": args.num_epochs}, f)
-    else:
-        with open(json_num_epochs, "r") as f:
-            num_epochs = json.load(f)["num_epochs"]
-        if num_epochs != args.num_epochs:
-            raise RuntimeError(f"Training already started with {num_epochs} epochs in this folder! "
-                               f"Resuming a training with {args.num_epochs} epochs is not possible. "
-                               f"Use a different folder when training with {args.num_epochs} epochs.")
+    validate_num_epochs(num_epochs, json_num_epochs, save=True)
 
     envs = {
-        "NUM_EPOCHS": str(args.num_epochs),
+        "NUM_EPOCHS": str(num_epochs),
         "CUDA_VISIBLE_DEVICES": str(args.device),
         **os.environ,
     }
+    if parts is not None:
+        print(f"Using parts {parts}")
+        if parts[1] == "wl1":
+            print("Using wl1")
+            handle_wl1(dataset_json, envs)
+        else:
+            print("Unknown parts[1]")
     command = (
         "nnUNetv2_train "
         f"-p {envs['nnUNet_plans']} "
@@ -296,6 +344,7 @@ def train(args):
 
 
 def validate(args):
+    num_epochs, _ = get_num_epochs(args.num_epochs)
     preprocess_path = os.getenv("cont_preproc_path")
     model_path = os.getenv("cont_model_path")
     dataset_json = os.path.join(preprocess_path, "dataset.json")
@@ -333,12 +382,7 @@ def validate(args):
     if not os.path.isfile(json_num_epochs):
         raise FileNotFoundError(f"File {json_num_epochs} is not available. Run training first")
     else:
-        with open(json_num_epochs, "r") as f:
-            num_epochs = json.load(f)["num_epochs"]
-        if num_epochs != args.num_epochs:
-            raise RuntimeError(f"Training was done with {num_epochs} epochs in this folder! "
-                               f"Validating a training with {args.num_epochs} epochs is not possible. "
-                               f"Use a different folder when validating the model with {args.num_epochs} epochs.")
+        validate_num_epochs(num_epochs, json_num_epochs, False)
 
     model_path = os.getenv("cont_model_path")
     fold_path = os.path.join(model_path, f"fold_{args.fold}")
@@ -355,7 +399,7 @@ def validate(args):
     validation_done = os.path.isfile(validation_done_path)
 
     envs = {
-        "NUM_EPOCHS": str(args.num_epochs),
+        "NUM_EPOCHS": str(num_epochs),
         "CUDA_VISIBLE_DEVICES": str(args.device),
         "DO_VALIDATION": "1",
         **os.environ,
@@ -512,18 +556,18 @@ def main():
     parser_train = subparsers.add_parser("train", help="Do training")
     parser_train.add_argument("-fold", type=str, help="Fold", default="0")
     parser_train.add_argument("-device", type=int, help="CUDA device index", default=0)
-    parser_train.add_argument("-num_epochs", type=int, help="Number of epochs", default=1000, choices=num_epochs_range)
+    parser_train.add_argument("-num_epochs", type=str, help="Number of epochs", default=1000, choices=num_epochs_range)
     parser_train.set_defaults(func=train)
 
     parser_train = subparsers.add_parser("validate", help="Do validation for existing training")
     parser_train.add_argument("-fold", type=str, help="Fold", default="0")
     parser_train.add_argument("-device", type=int, help="CUDA device index", default=0)
-    parser_train.add_argument("-num_epochs", type=int, help="Number of epochs", default=1000, choices=num_epochs_range)
+    parser_train.add_argument("-num_epochs", type=str, help="Number of epochs", default=1000, choices=num_epochs_range)
     parser_train.set_defaults(func=validate)
 
     parser_train = subparsers.add_parser("cross_validate", help="Do validation for existing training")
     parser_train.add_argument("-device", type=int, help="CUDA device index", default=0)
-    parser_train.add_argument("-num_epochs", type=int, help="Number of epochs", default=1000, choices=num_epochs_range)
+    parser_train.add_argument("-num_epochs", type=str, help="Number of epochs", default=1000, choices=num_epochs_range)
     parser_train.set_defaults(func=cross_validate)
 
     args = parser.parse_args()
