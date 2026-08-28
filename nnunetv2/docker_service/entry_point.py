@@ -152,6 +152,28 @@ def pre_preprocess(labels, original_labels, labels_tr):
         remap_segmentation_labels(mask, mapping, new_mask)
 
 
+def load_labels(labels_json):
+    error_msg = (
+        f"File {labels_json} is not available or is corrupted.\n"
+        """
+        Example:
+        [
+            "bone", 
+            "artery", 
+            "calcification", 
+            "thrombosis"
+        ]
+        """
+    )
+    if not os.path.isfile(labels_json):
+        raise FileNotFoundError(error_msg)
+    try:
+        with open(labels_json, "r") as f:
+            return json.load(f)
+    except Exception as e:
+        raise RuntimeError(error_msg) from e
+
+
 def preprocess(args):
     raw_path = os.getenv("cont_data_path")
     images_tr = os.path.join(raw_path, "imagesTr")
@@ -191,26 +213,7 @@ def preprocess(args):
             f"Available training labels: {label_files}"
         )
 
-    error_msg = (
-        f"File {labels_json} is not available or is corrupted.\n"
-        """
-        Example:
-        [
-            "bone", 
-            "artery", 
-            "calcification", 
-            "thrombosis"
-        ]
-        """
-    )
-    if not os.path.isfile(labels_json):
-        raise FileNotFoundError(error_msg)
-    try:
-        with open(labels_json, "r") as f:
-            labels = json.load(f)
-    except Exception as e:
-        raise RuntimeError(error_msg) from e
-
+    labels = load_labels(labels_json)
     labels = {
         "background": 0,
         **{label: i + 1 for i, label in enumerate(labels)},
@@ -259,6 +262,7 @@ def preprocess(args):
         print("Split creation failed. Check the logs for the error")
         raise RuntimeError("Split creation failed")
 
+
 def get_num_epochs(num_epochs):
     print(f"Using {num_epochs} epochs")
     parts = None
@@ -268,6 +272,7 @@ def get_num_epochs(num_epochs):
     else:
         num_epochs = int(num_epochs)
     return num_epochs, parts
+
 
 def validate_num_epochs(num_epochs, num_epochs_path, save=False):
     if save and not os.path.isfile(num_epochs_path):
@@ -351,28 +356,11 @@ def validate(args):
     json_num_epochs = os.path.join(model_path, "num_epochs.json")
     raw_path = os.getenv("cont_data_path")
     labels_json = os.path.join(raw_path, "labels.json")
-    error_msg = (
-        f"File {labels_json} is not available or is corrupted.\n"
-        """
-        Example:
-        [
-            "bone", 
-            "artery", 
-            "calcification", 
-            "thrombosis"
-        ]
-        """
-    )
-    if not os.path.isfile(labels_json):
-        raise FileNotFoundError(error_msg)
-    try:
-        with open(labels_json, "r") as f:
-            labels = json.load(f)
-        labels = {
-            **{label: i + 1 for i, label in enumerate(labels)},
-        }
-    except Exception as e:
-        raise RuntimeError(error_msg) from e
+    labels = load_labels(labels_json)
+    labels = {
+        **{label: i + 1 for i, label in enumerate(labels)},
+    }
+
     if not os.path.isdir(preprocess_path):
         raise FileNotFoundError(f"Folder {preprocess_path} is not available. Run preprocessing first!")
     if not os.path.isdir(model_path):
@@ -482,7 +470,8 @@ def cross_validate(args):
         if not os.path.isdir(fold_path):
             raise FileNotFoundError(f"Fold {fold_path} not available, please train the model first")
         if not os.path.isdir(validation_path):
-            raise FileNotFoundError(f"Validation folder {validation_path} not available, please validate the model first")
+            raise FileNotFoundError(
+                f"Validation folder {validation_path} not available, please validate the model first")
         if not os.path.isfile(results_path):
             raise FileNotFoundError(f"Results {results_path} not available, please validate the model first")
         with open(results_path, "r") as f:
@@ -545,7 +534,8 @@ def main():
     parser_inference = subparsers.add_parser("inference", help="Do inference")
     parser_inference.add_argument("-fold", type=str, help="Fold", default="0")
     parser_inference.add_argument("-device", type=int, help="CUDA device index", default=0)
-    parser_inference.set_defaults(func=inference, input=os.getenv("cont_input_path"), output=os.getenv("cont_output_path"))
+    parser_inference.set_defaults(func=inference, input=os.getenv("cont_input_path"),
+                                  output=os.getenv("cont_output_path"))
 
     parser_preprocess = subparsers.add_parser("preprocess", help="Do preprocessing")
     parser_preprocess.add_argument("-num_workers", type=int, default=4,
