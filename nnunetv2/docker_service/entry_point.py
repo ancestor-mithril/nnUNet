@@ -402,6 +402,7 @@ def validate(args):
         "NUM_EPOCHS": str(num_epochs),
         "CUDA_VISIBLE_DEVICES": str(args.device),
         "DO_VALIDATION": "1",
+        "USE_HALF": "1",
         **os.environ,
     }
     command = (

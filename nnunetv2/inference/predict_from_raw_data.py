@@ -222,6 +222,11 @@ class nnUNetPredictor(object):
         allow_compile = allow_compile and not isinstance(self.network, OptimizedModule)
         if isinstance(self.network, DistributedDataParallel):
             allow_compile = allow_compile and isinstance(self.network.module, OptimizedModule)
+
+        self.network.eval()
+        if os.getenv("USE_HALF", "0") == "1":
+            self.use_half = True
+            self.network = self.network.to(device=self.device, dtype=torch.float16)
         if allow_compile:
             print('Using torch.compile')
             self.network = torch.compile(self.network)
@@ -706,12 +711,10 @@ class nnUNetPredictor(object):
                                'predicted_logits to fp32')
         return predicted_logits
 
-    @torch.inference_mode()
     def predict_sliding_window_return_logits(self, input_image: torch.Tensor, external: bool = True) \
             -> Union[np.ndarray, torch.Tensor]:
-        if external:
-            self.network = self.network.to(self.device)
-            self.network.eval()
+        if external and self.use_half:
+            input_image = input_image.half()
 
         use_autocast = self.device.type == 'cuda' and not self.use_half
 
