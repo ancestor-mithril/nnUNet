@@ -12,16 +12,16 @@ from tqdm import tqdm
 from metrics import calculate_segmentation_metrics
 
 num_epochs_range = [
-    1,
-    100,
-    250,
-    500,
+    "1",
+    "100",
+    "250",
+    "500",
     "500_wl1",
-    750,
-    1000,
+    "750",
+    "1000",
     "1000_wl1",
-    2000,
-    4000
+    "2000",
+    "4000"
 ]
 model_sizes_range = [
     8, 12, 18, 24, 32
