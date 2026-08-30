@@ -415,7 +415,7 @@ def validate(args):
 
     labels_tr = os.path.join(raw_path, "labelsTr")
     results_path = os.path.join(validation_path, "results.json")
-    metrics = calculate_segmentation_metrics(validation_path, labels_tr, labels, 4)
+    metrics = calculate_segmentation_metrics(validation_path, labels_tr, labels, 16)
     with open(results_path, "w") as f:
         json.dump(metrics, f, indent=2)
     print(f"Validation metrics written to {results_path}")
