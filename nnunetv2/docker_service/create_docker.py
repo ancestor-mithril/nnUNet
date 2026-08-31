@@ -16,7 +16,6 @@ def entry_point():
 
     os.makedirs(args.docker_app, exist_ok=True)
     shutil.copy(os.path.join(os.path.dirname(__file__), "entry_point.py"), os.path.join(args.docker_app, "entry_point.py"))
-    shutil.copy(os.path.join(os.path.dirname(__file__), "metrics.py"), os.path.join(args.docker_app, "metrics.py"))
 
     dockerfile = f"""
 FROM {args.base_docker_image}
@@ -57,7 +56,7 @@ RUN mkdir -p /app/input /app/output ${{cont_data_path}} ${{cont_model_path}} ${{
     COMMIT_HASH=$(git ls-remote "https://github.com/ancestor-mithril/nnUNet.git" "refs/heads/new" | awk '{{print $1}}') && \
     echo "$COMMIT_HASH" > /app/COMMIT_HASH
 
-COPY entry_point.py metrics.py /app
+COPY entry_point.py /app
 
 ENTRYPOINT ["python", "entry_point.py"]
     """
