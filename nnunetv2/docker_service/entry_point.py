@@ -9,8 +9,6 @@ import SimpleITK as sitk
 import torch.accelerator
 from tqdm import tqdm
 
-from metrics import calculate_segmentation_metrics
-
 num_epochs_range = [
     "1",
     "100",
@@ -415,9 +413,21 @@ def validate(args):
 
     labels_tr = os.path.join(raw_path, "labelsTr")
     results_path = os.path.join(validation_path, "results.json")
-    metrics = calculate_segmentation_metrics(validation_path, labels_tr, labels, 16)
-    with open(results_path, "w") as f:
-        json.dump(metrics, f, indent=2)
+    labels_mapping = json.dumps(labels).replace("\"", "'")
+    command = (
+        f"dice_score_3d "
+        f"{labels_tr} "
+        f"{validation_path} "
+        f"-output {results_path} "
+        f"-indices \"{labels_mapping}\" "
+        f"--console "
+        f"-num_workers 4 "
+        f"--ignore_gt_size "
+    )
+    succeeded = run_command(command, envs)
+    if not succeeded:
+        print("Validation failed during dice-score. Check the logs for the error")
+        raise RuntimeError("Validation failed during dice-score")
     print(f"Validation metrics written to {results_path}")
 
 
