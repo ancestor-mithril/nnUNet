@@ -8,6 +8,7 @@ import numpy as np
 import SimpleITK as sitk
 import torch.accelerator
 from tqdm import tqdm
+from label_metrics import evaluate_folders, KFoldResult
 
 num_epochs_range = [
     "1",
@@ -412,81 +413,110 @@ def validate(args):
             f.write(str(succeeded))
 
     labels_tr = os.path.join(raw_path, "labelsTr")
-    results_path = os.path.join(validation_path, "results.json")
-    labels_mapping = json.dumps(labels).replace("\"", "'")
-    command = (
-        f"dice_score_3d "
-        f"{labels_tr} "
-        f"{validation_path} "
-        f"-output {results_path} "
-        f"-indices \"{labels_mapping}\" "
-        f"--console "
-        f"-num_workers 4 "
-        f"--ignore_gt_size "
+
+    serialized_path = os.path.join(
+        validation_path,
+        "evaluation.json",
     )
-    succeeded = run_command(command, envs)
-    if not succeeded:
-        print("Validation failed during dice-score. Check the logs for the error")
-        raise RuntimeError("Validation failed during dice-score")
-    print(f"Validation metrics written to {results_path}")
+    metrics_path = os.path.join(
+        validation_path,
+        "metrics.json",
+    )
+    report_path = os.path.join(
+        validation_path,
+        "metrics.txt",
+    )
 
+    result = evaluate_folders(
+        prediction_folder=validation_path,
+        ground_truth_folder=labels_tr,
+        labels=labels,
+        prediction_prefix="",
+        prediction_suffix=".nii.gz",
+        ground_truth_prefix="",
+        ground_truth_suffix=".nii.gz",
+        reorient=True,
+        workers=8,
+    )
 
-def aggregate_results(dicts):
-    return {
-        "folds": {
-            str(i): d
-            for i, d in enumerate(dicts)
-        },
-        "mean": {
-            k1: {
-                k2: float(np.mean([d[k1][k2] for d in dicts]))
-                for k2 in dicts[0][k1]
-            }
-            for k1 in dicts[0]
-        },
-        "std": {
-            k1: {
-                k2: float(np.std([d[k1][k2] for d in dicts]))
-                for k2 in dicts[0][k1]
-            }
-            for k1 in dicts[0]
-        },
-    }
+    result.serialize(serialized_path)
+    result.save_metrics_json(metrics_path)
+    result.save_text_report(report_path)
+
+    print(f"Serialized evaluation written to {serialized_path}")
+    print(f"Validation metrics written to {metrics_path}")
+    print(f"Validation report written to {report_path}")
 
 
 def cross_validate(args):
-    all_results = []
     model_path = os.getenv("cont_model_path")
     output = os.getenv("cont_output_path")
-    if not os.path.isdir(output):
-        raise FileNotFoundError(f"Folder {output} is not available")
-    for fold in ["0", "1", "2", "3", "4"]:
-        fold_path = os.path.join(model_path, f"fold_{fold}")
-        validation_path = os.path.join(fold_path, "validation")
-        results_path = os.path.join(validation_path, "results.json")
 
-        if not os.path.isdir(model_path):
-            raise FileNotFoundError(f"Folder {model_path} is not available")
+    if not model_path or not os.path.isdir(model_path):
+        raise FileNotFoundError(
+            f"Folder {model_path} is not available."
+        )
+
+    if not output or not os.path.isdir(output):
+        raise FileNotFoundError(
+            f"Folder {output} is not available."
+        )
+
+    fold_paths = {}
+
+    for fold in range(5):
+        fold_name = f"fold_{fold}"
+        fold_path = os.path.join(
+            model_path,
+            fold_name,
+        )
+        validation_path = os.path.join(
+            fold_path,
+            "validation",
+        )
+        evaluation_path = os.path.join(
+            validation_path,
+            "evaluation.json",
+        )
+
         if not os.path.isdir(fold_path):
-            raise FileNotFoundError(f"Fold {fold_path} not available, please train the model first")
+            raise FileNotFoundError(
+                f"Fold {fold_path} is not available. "
+                "Please train the model first."
+            )
+
         if not os.path.isdir(validation_path):
             raise FileNotFoundError(
-                f"Validation folder {validation_path} not available, please validate the model first")
-        if not os.path.isfile(results_path):
-            raise FileNotFoundError(f"Results {results_path} not available, please validate the model first")
-        with open(results_path, "r") as f:
-            results = json.load(f)
-        metrics = {
-            "Mean": results["Mean"],
-            "Weighted mean": results["Weighted mean"],
-            "Global dice": results["Global dice"],
-        }
-        all_results.append(metrics)
+                f"Validation folder {validation_path} "
+                "is not available. "
+                "Please validate the model first."
+            )
 
-    final_results_path = os.path.join(output, "final_results.json")
-    with open(final_results_path, "w") as f:
-        json.dump(aggregate_results(all_results), f, indent=4)
-    print(f"Cross-Validation metrics written to {final_results_path}")
+        if not os.path.isfile(evaluation_path):
+            raise FileNotFoundError(
+                f"Evaluation {evaluation_path} "
+                "is not available. "
+                "Please validate the model first."
+            )
+
+        fold_paths[fold_name] = evaluation_path
+
+    result = KFoldResult.load(fold_paths)
+
+    metrics_path = os.path.join(
+        output,
+        "kfold_metrics.json",
+    )
+    report_path = os.path.join(
+        output,
+        "kfold_metrics.txt",
+    )
+
+    result.save_metrics_json(metrics_path)
+    result.save_text_report(report_path)
+
+    print(f"K-fold metrics written to {metrics_path}")
+    print(f"K-fold report written to {report_path}")
 
 
 def props(_):
