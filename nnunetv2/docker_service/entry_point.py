@@ -356,11 +356,8 @@ def validate(args):
     dataset_json = os.path.join(preprocess_path, "dataset.json")
     json_num_epochs = os.path.join(model_path, "num_epochs.json")
     raw_path = os.getenv("cont_data_path")
-    labels_json = os.path.join(raw_path, "labels.json")
-    labels = load_labels(labels_json)
-    labels = {
-        **{label: i + 1 for i, label in enumerate(labels)},
-    }
+    with open(dataset_json, "r") as f:
+        labels = json.load(f)["labels"]
 
     if not os.path.isdir(preprocess_path):
         raise FileNotFoundError(f"Folder {preprocess_path} is not available. Run preprocessing first!")
