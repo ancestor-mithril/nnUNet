@@ -584,7 +584,7 @@ def main():
     parser_train.set_defaults(func=validate)
 
     parser_train = subparsers.add_parser("cross_validate", help="Do validation for existing training")
-    parser_train.add_argument("-device", type=int, help="CUDA device index", default=0)
+    parser_train.add_argument("-device", type=str, help="CUDA device index", default="0")
     parser_train.add_argument("-num_epochs", type=str, help="Number of epochs", default=1000, choices=num_epochs_range)
     parser_train.set_defaults(func=cross_validate)
 
