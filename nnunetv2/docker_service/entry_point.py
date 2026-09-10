@@ -67,6 +67,7 @@ def try_inference(input_path: str, output_path: str, folds: list[str], use_cuda:
         f"-chk {checkpoint} "
         f"-npp 0 "
         f"-nps 0 "
+        f"--not_on_device --continue_prediction "
     )
     if use_cuda:
         command += "-device cuda "
