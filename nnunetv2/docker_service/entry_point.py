@@ -46,7 +46,7 @@ def try_inference(input_path: str, output_path: str, folds: list[str], use_cuda:
         print(f"Using cpu for inference")
 
     envs = {
-        "USE_HALF": "1",
+        "USE_HALF": "0",
         **os.environ
     }
     if use_cuda:
