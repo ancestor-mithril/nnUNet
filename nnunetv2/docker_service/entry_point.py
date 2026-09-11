@@ -38,7 +38,7 @@ def run_command(command, envs):
 
 
 def try_inference(input_path: str, output_path: str, folds: list[str], use_cuda: bool = False, device_index: int = 0,
-                  use_best: bool = False):
+                  use_best: bool = False, step_size=0.5):
     fold = " ".join(folds)
     if use_cuda:
         print(f"Using cuda device {device_index} for inference!")
@@ -63,7 +63,7 @@ def try_inference(input_path: str, output_path: str, folds: list[str], use_cuda:
         f"-tr {envs['nnUNet_trainer']} "
         f"-c {envs['nnUNet_conf']} "
         f"-f {fold} "
-        f"-step_size {envs['nnUNet_step_size']} "
+        f"-step_size {step_size} "
         f"-chk {checkpoint} "
         f"-npp 0 "
         f"-nps 0 "
@@ -103,9 +103,9 @@ def inference(args):
         raise FileNotFoundError(f"Folder {args.output} is not available")
 
     print(f"Cuda Available: {torch.cuda.is_available()}")
-    succeeded = try_inference(args.input, args.output, folds, use_cuda=True, device_index=args.device)
+    succeeded = try_inference(args.input, args.output, folds, use_cuda=True, device_index=args.device, step_size=args.step_size)
     if not succeeded:
-        succeeded = try_inference(args.input, args.output, folds, use_cuda=False)
+        succeeded = try_inference(args.input, args.output, folds, use_cuda=False,step_size=args.step_size)
         if not succeeded:
             print("Inference failed. Check the logs for the error")
             raise RuntimeError("Inference failed")
@@ -562,6 +562,7 @@ def main():
     parser_inference = subparsers.add_parser("inference", help="Do inference")
     parser_inference.add_argument("-fold", type=str, help="Fold", default="0")
     parser_inference.add_argument("-device", type=int, help="CUDA device index", default=0)
+    parser_inference.add_argument("step_size", type=float, default=0.5)
     parser_inference.set_defaults(func=inference, input=os.getenv("cont_input_path"),
                                   output=os.getenv("cont_output_path"))
 
