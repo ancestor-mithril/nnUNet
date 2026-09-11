@@ -562,7 +562,7 @@ def main():
     parser_inference = subparsers.add_parser("inference", help="Do inference")
     parser_inference.add_argument("-fold", type=str, help="Fold", default="0")
     parser_inference.add_argument("-device", type=int, help="CUDA device index", default=0)
-    parser_inference.add_argument("step_size", type=float, default=0.5)
+    parser_inference.add_argument("-step_size", type=float, default=0.5)
     parser_inference.set_defaults(func=inference, input=os.getenv("cont_input_path"),
                                   output=os.getenv("cont_output_path"))
 
