@@ -46,9 +46,14 @@ def try_inference(input_path: str, output_path: str, folds: list[str], use_cuda:
         print(f"Using cpu for inference")
 
     envs = {
-        "USE_HALF": "0",
+        "USE_HALF": "1" if use_cuda else "0",
         **os.environ
     }
+    if step_size == 0.5:
+        step_size = envs["nnUNet_step_size"]
+        print("Using env step size")
+    print("Using step_size:", step_size)
+
     if use_cuda:
         envs["CUDA_VISIBLE_DEVICES"] = str(device_index)
 
@@ -79,6 +84,10 @@ def try_inference(input_path: str, output_path: str, folds: list[str], use_cuda:
 
 
 def inference(args):
+    if args.step_size == 0.0:
+        args.step_size = 0.5
+    if args.step_size < 0.1 or args.step_size > 1.0:
+        raise RuntimeError(f"step_size can't be lower than 0.1 or bigger than 1.0, is {args.step_size}")
     model_path = os.getenv("cont_model_path")
     if args.fold == "ensemble":
         folds = ["0", "1", "2", "3", "4"]
@@ -562,7 +571,7 @@ def main():
     parser_inference = subparsers.add_parser("inference", help="Do inference")
     parser_inference.add_argument("-fold", type=str, help="Fold", default="0")
     parser_inference.add_argument("-device", type=int, help="CUDA device index", default=0)
-    parser_inference.add_argument("-step_size", type=float, default=0.5)
+    parser_inference.add_argument("-step_size", type=float, default=0.0)
     parser_inference.set_defaults(func=inference, input=os.getenv("cont_input_path"),
                                   output=os.getenv("cont_output_path"))
 

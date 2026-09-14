@@ -24,7 +24,7 @@ ENV nnUNet_dataset=100
 ENV nnUNet_plans=nnUNetResEncUNetLPlans_torchres
 ENV nnUNet_trainer=nnUNetTrainerMuon
 ENV nnUNet_conf=3d_fullres
-ENV nnUNet_step_size=0.5
+ENV nnUNet_step_size=0.25
 ENV nnUNet_disable_tta=0
 
 ENV copy_elision=1
