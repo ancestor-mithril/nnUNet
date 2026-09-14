@@ -1312,7 +1312,7 @@ class nnUNetTrainer(object):
 
         predictor = nnUNetPredictor(tile_step_size=0.5, use_gaussian=True, use_mirroring=True,
                                     perform_everything_on_device=False, device=self.device, verbose=False,
-                                    verbose_preprocessing=False, allow_tqdm=True)
+                                    verbose_preprocessing=False, allow_tqdm=False)
         predictor.manual_initialization(self.network, self.plans_manager, self.configuration_manager, None,
                                         self.dataset_json, self.__class__.__name__,
                                         self.inference_allowed_mirroring_axes)
@@ -1341,9 +1341,9 @@ class nnUNetTrainer(object):
                 _ = [maybe_mkdir_p(join(self.output_folder_base, 'predicted_next_stage', n)) for n in next_stages]
 
             results = []
-
+            n = len(dataset_val.identifiers)
             for i, k in enumerate(dataset_val.identifiers):
-                self.print_to_log_file(f"predicting {k}")
+                self.print_to_log_file(f"predicting {i}/{n}: {k}")
                 data, _, seg_prev, properties = dataset_val.load_case(k)
 
                 # we do [:] to convert blosc2 to numpy
