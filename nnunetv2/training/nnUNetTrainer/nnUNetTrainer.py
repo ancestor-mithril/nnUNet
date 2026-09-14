@@ -43,6 +43,7 @@ from torch._dynamo import OptimizedModule
 from torch.cuda import device_count
 from torch import GradScaler
 from torch.nn.parallel import DistributedDataParallel as DDP
+from tqdm import tqdm
 
 from nnunetv2.configuration import ANISO_THRESHOLD, default_num_processes
 from nnunetv2.evaluation.evaluate_predictions import compute_metrics_on_folder
@@ -1342,7 +1343,7 @@ class nnUNetTrainer(object):
 
             results = []
             n = len(dataset_val.identifiers)
-            for i, k in enumerate(dataset_val.identifiers):
+            for i, k in tqdm(list(enumerate(dataset_val.identifiers)), desc="Validation"):
                 self.print_to_log_file(f"predicting {i}/{n}: {k}")
                 data, _, seg_prev, properties = dataset_val.load_case(k)
 
