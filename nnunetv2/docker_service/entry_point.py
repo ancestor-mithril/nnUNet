@@ -49,10 +49,6 @@ def try_inference(input_path: str, output_path: str, folds: list[str], use_cuda:
         "USE_HALF": "1" if use_cuda else "0",
         **os.environ
     }
-    if step_size == 0.0:
-        step_size = 0.5
-        step_size = envs["nnUNet_step_size"]
-        print("Using env step size")
     print("Using step_size:", step_size)
 
     if use_cuda:
@@ -570,7 +566,7 @@ def main():
     parser_inference = subparsers.add_parser("inference", help="Do inference")
     parser_inference.add_argument("-fold", type=str, help="Fold", default="0")
     parser_inference.add_argument("-device", type=int, help="CUDA device index", default=0)
-    parser_inference.add_argument("-step_size", type=float, default=0.0)
+    parser_inference.add_argument("-step_size", type=float, default=float(os.getenv("nnUNet_step_size", "0.5")))
     parser_inference.set_defaults(func=inference, input=os.getenv("cont_input_path"),
                                   output=os.getenv("cont_output_path"))
 
