@@ -49,7 +49,8 @@ def try_inference(input_path: str, output_path: str, folds: list[str], use_cuda:
         "USE_HALF": "1" if use_cuda else "0",
         **os.environ
     }
-    if step_size == 0.5:
+    if step_size == 0.0:
+        step_size = 0.5
         step_size = envs["nnUNet_step_size"]
         print("Using env step size")
     print("Using step_size:", step_size)
@@ -84,9 +85,7 @@ def try_inference(input_path: str, output_path: str, folds: list[str], use_cuda:
 
 
 def inference(args):
-    if args.step_size == 0.0:
-        args.step_size = 0.5
-    if args.step_size < 0.1 or args.step_size > 1.0:
+    if args.step_size != 0.0 and (args.step_size < 0.1 or args.step_size > 1.0):
         raise RuntimeError(f"step_size can't be lower than 0.1 or bigger than 1.0, is {args.step_size}")
     model_path = os.getenv("cont_model_path")
     if args.fold == "ensemble":
