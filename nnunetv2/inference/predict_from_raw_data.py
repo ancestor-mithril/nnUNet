@@ -807,7 +807,7 @@ class nnUNetPredictor(object):
             seg_from_prev_stage_files = [None] * len(list_of_lists_or_source_folder)
 
         ret = []
-        for li, of, sps in zip(list_of_lists_or_source_folder, output_filename_truncated, seg_from_prev_stage_files):
+        for li, of, sps in tqdm(list(zip(list_of_lists_or_source_folder, output_filename_truncated, seg_from_prev_stage_files)), desc="Inference bar"):
             print("Case", li[0].split("/")[-1])
             data, _, data_properties = preprocessor.run_case(
                 li,
