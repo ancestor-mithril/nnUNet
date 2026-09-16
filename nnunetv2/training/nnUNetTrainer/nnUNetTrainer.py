@@ -1320,7 +1320,7 @@ class nnUNetTrainer(object):
 
         validation_path = 'validation'
         if step_size != 0.5:
-            validation_path += '_' + str(step_size)
+            validation_path = f'{validation_path}_{step_size}'
         if os.getenv("sequential_validation", "1") == "1":
             validation_output_folder = join(self.output_folder, validation_path)
             maybe_mkdir_p(validation_output_folder)

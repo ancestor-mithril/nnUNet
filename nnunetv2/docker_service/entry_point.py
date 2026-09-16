@@ -385,69 +385,73 @@ def validate(args):
     if not os.path.isfile(model_checkpoint):
         raise FileNotFoundError(f"Model checkpoint {model_checkpoint} not available, please train the model first")
 
-    validation_path = os.path.join(fold_path, "validation")
-    validation_done_path = os.path.join(validation_path, "done")
-    validation_done = os.path.isfile(validation_done_path)
+    for step_size in [0.25, 0.5]:
+        if step_size != 0.5:
+            validation_path = os.path.join(fold_path, f"validation_{step_size}")
+        else:
+            validation_path = os.path.join(fold_path, f"validation")
+        validation_done_path = os.path.join(validation_path, "done")
+        validation_done = os.path.isfile(validation_done_path)
 
-    envs = {
-        "NUM_EPOCHS": str(num_epochs),
-        "CUDA_VISIBLE_DEVICES": str(args.device),
-        "DO_VALIDATION": "1",
-        "USE_HALF": "1",
-        **os.environ,
-    }
-    command = (
-        "nnUNetv2_train "
-        f"-p {envs['nnUNet_plans']} "
-        f"-tr {envs['nnUNet_trainer']} "
-        f"--val "
-        f"{envs['nnUNet_dataset']} "
-        f"{envs['nnUNet_conf']} "
-        f"{args.fold} "
-    )
+        envs = {
+            "NUM_EPOCHS": str(num_epochs),
+            "CUDA_VISIBLE_DEVICES": str(args.device),
+            "DO_VALIDATION": "1",
+            "USE_HALF": "1",
+            **os.environ,
+        }
+        command = (
+            "nnUNetv2_train "
+            f"-p {envs['nnUNet_plans']} "
+            f"-tr {envs['nnUNet_trainer']} "
+            f"--val -step_size_for_validation {step_size} "
+            f"{envs['nnUNet_dataset']} "
+            f"{envs['nnUNet_conf']} "
+            f"{args.fold} "
+        )
 
-    if not validation_done:
-        succeeded = run_command(command, envs)
-        if not succeeded:
-            print("Validation failed during inference. Check the logs for the error")
-            raise RuntimeError("Validation failed during inference")
-        with open(validation_done_path, "w") as f:
-            f.write(str(succeeded))
+        if not validation_done:
+            succeeded = run_command(command, envs)
+            if not succeeded:
+                print("Validation failed during inference. Check the logs for the error")
+                raise RuntimeError("Validation failed during inference")
+            with open(validation_done_path, "w") as f:
+                f.write(str(succeeded))
 
-    labels_tr = os.path.join(raw_path, "labelsTr")
+        labels_tr = os.path.join(raw_path, "labelsTr")
 
-    serialized_path = os.path.join(
-        validation_path,
-        "evaluation.json",
-    )
-    metrics_path = os.path.join(
-        validation_path,
-        "metrics.json",
-    )
-    report_path = os.path.join(
-        validation_path,
-        "metrics.txt",
-    )
+        serialized_path = os.path.join(
+            validation_path,
+            "evaluation.json",
+        )
+        metrics_path = os.path.join(
+            validation_path,
+            "metrics.json",
+        )
+        report_path = os.path.join(
+            validation_path,
+            "metrics.txt",
+        )
 
-    result = evaluate_folders(
-        prediction_folder=validation_path,
-        ground_truth_folder=labels_tr,
-        labels=labels,
-        prediction_prefix="",
-        prediction_suffix=".nii.gz",
-        ground_truth_prefix="",
-        ground_truth_suffix=".nii.gz",
-        reorient=True,
-        workers=8,
-    )
+        result = evaluate_folders(
+            prediction_folder=validation_path,
+            ground_truth_folder=labels_tr,
+            labels=labels,
+            prediction_prefix="",
+            prediction_suffix=".nii.gz",
+            ground_truth_prefix="",
+            ground_truth_suffix=".nii.gz",
+            reorient=True,
+            workers=8,
+        )
 
-    result.serialize(serialized_path)
-    result.save_metrics_json(metrics_path)
-    result.save_text_report(report_path)
+        result.serialize(serialized_path)
+        result.save_metrics_json(metrics_path)
+        result.save_text_report(report_path)
 
-    print(f"Serialized evaluation written to {serialized_path}")
-    print(f"Validation metrics written to {metrics_path}")
-    print(f"Validation report written to {report_path}")
+        print(f"Serialized evaluation written to {serialized_path}")
+        print(f"Validation metrics written to {metrics_path}")
+        print(f"Validation report written to {report_path}")
 
 
 def cross_validate(args):
