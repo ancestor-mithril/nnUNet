@@ -686,10 +686,16 @@ class nnUNetPredictor(object):
         else:
             gaussian = 1
 
-        if not self.allow_tqdm and self.verbose:
-            print(f'running prediction: {len(slicers)} steps')
+        step = 0
+        n = len(slicers)
+        perf_logger.info(f'running prediction: {n} steps')
 
         for sl in tqdm(slicers, disable=not self.allow_tqdm):
+            if not self.allow_tqdm:
+                step += 1
+                if step % 10 == 0:
+                    perf_logger.info(f"Step {step}/{n}")
+
             with Timer("predict"):
                 # _batched_maybe_mirror_and_predict is slower :(
                 prediction = pred_fn(data[sl]).to(results_device)
