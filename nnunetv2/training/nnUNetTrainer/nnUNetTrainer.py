@@ -1297,7 +1297,7 @@ class nnUNetTrainer(object):
                 self.grad_scaler.load_state_dict(checkpoint['grad_scaler_state'])
 
     @torch.inference_mode()
-    def perform_actual_validation(self, save_probabilities: bool = False):
+    def perform_actual_validation(self, save_probabilities: bool = False, step_size: float = 0.5):
         self.set_deep_supervision_enabled(False)
         self.network.eval()
 
@@ -1311,16 +1311,18 @@ class nnUNetTrainer(object):
                                    "forward pass (where compile is triggered) already has deep supervision disabled. "
                                    "This is exactly what we need in perform_actual_validation")
 
-        predictor = nnUNetPredictor(tile_step_size=0.5, use_gaussian=True, use_mirroring=True,
+        predictor = nnUNetPredictor(tile_step_size=step_size, use_gaussian=True, use_mirroring=True,
                                     perform_everything_on_device=False, device=self.device, verbose=False,
                                     verbose_preprocessing=False, allow_tqdm=False)
         predictor.manual_initialization(self.network, self.plans_manager, self.configuration_manager, None,
                                         self.dataset_json, self.__class__.__name__,
                                         self.inference_allowed_mirroring_axes)
 
-
+        validation_path = 'validation'
+        if step_size != 0.5:
+            validation_path += '_' + str(step_size)
         if os.getenv("sequential_validation", "1") == "1":
-            validation_output_folder = join(self.output_folder, 'validation')
+            validation_output_folder = join(self.output_folder, validation_path)
             maybe_mkdir_p(validation_output_folder)
 
             # we cannot use self.get_tr_and_val_datasets() here because we might be DDP and then we have to distribute
@@ -1437,7 +1439,7 @@ class nnUNetTrainer(object):
 
         with multiprocessing.get_context("spawn").Pool(default_num_processes) as segmentation_export_pool:
             worker_list = [i for i in segmentation_export_pool._pool]
-            validation_output_folder = join(self.output_folder, 'validation')
+            validation_output_folder = join(self.output_folder, validation_path)
             maybe_mkdir_p(validation_output_folder)
 
             # we cannot use self.get_tr_and_val_datasets() here because we might be DDP and then we have to distribute

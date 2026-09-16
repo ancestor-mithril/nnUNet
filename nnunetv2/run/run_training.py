@@ -109,7 +109,7 @@ def cleanup_ddp():
     dist.destroy_process_group()
 
 
-def run_ddp(rank, dataset_name_or_id, configuration, fold, tr, p, disable_checkpointing, c, val,
+def run_ddp(rank, dataset_name_or_id, configuration, fold, tr, p, disable_checkpointing, c, val, step_size_for_val,
             pretrained_weights, npz, val_with_best, world_size):
     setup_ddp(rank, world_size)
     torch.cuda.set_device(torch.device('cuda', dist.get_rank()))
@@ -132,7 +132,7 @@ def run_ddp(rank, dataset_name_or_id, configuration, fold, tr, p, disable_checkp
 
     if val_with_best:
         nnunet_trainer.load_checkpoint(join(nnunet_trainer.output_folder, 'checkpoint_best.pth'))
-    nnunet_trainer.perform_actual_validation(npz)
+    nnunet_trainer.perform_actual_validation(npz, step_size_for_val)
     cleanup_ddp()
 
 
@@ -145,6 +145,7 @@ def run_training(dataset_name_or_id: Union[str, int],
                  export_validation_probabilities: bool = False,
                  continue_training: bool = False,
                  only_run_validation: bool = False,
+                 step_size_for_val: float = 0.5,
                  disable_checkpointing: bool = False,
                  val_with_best: bool = False,
                  device: torch.device = torch.device('cuda')):
@@ -184,6 +185,7 @@ def run_training(dataset_name_or_id: Union[str, int],
                      disable_checkpointing,
                      continue_training,
                      only_run_validation,
+                     step_size_for_val,
                      pretrained_weights,
                      export_validation_probabilities,
                      val_with_best,
@@ -212,7 +214,7 @@ def run_training(dataset_name_or_id: Union[str, int],
         if val_with_best:
             nnunet_trainer.load_checkpoint(join(nnunet_trainer.output_folder, 'checkpoint_best.pth'))
         if os.getenv("DO_VALIDATION", "0") == "1":
-            nnunet_trainer.perform_actual_validation(export_validation_probabilities)
+            nnunet_trainer.perform_actual_validation(export_validation_probabilities, step_size_for_val)
         else:
             print("Validation not done. To run validation, set the environment: DO_VALIDATION=1")
 
@@ -242,6 +244,7 @@ def run_training_entry():
                         help='[OPTIONAL] Continue training from latest checkpoint')
     parser.add_argument('--val', action='store_true', required=False,
                         help='[OPTIONAL] Set this flag to only run the validation. Requires training to have finished.')
+    parser.add_argument('-step_size_for_val', type=float, default=0.5, required=False)
     parser.add_argument('--val_best', action='store_true', required=False,
                         help='[OPTIONAL] If set, the validation will be performed with the checkpoint_best instead '
                              'of checkpoint_final. NOT COMPATIBLE with --disable_checkpointing! '
@@ -270,7 +273,7 @@ def run_training_entry():
         device = torch.device('mps')
 
     run_training(args.dataset_name_or_id, args.configuration, args.fold, args.tr, args.p, args.pretrained_weights,
-                 args.num_gpus, args.npz, args.c, args.val, args.disable_checkpointing, args.val_best,
+                 args.num_gpus, args.npz, args.c, args.val, args.step_size_for_val, args.disable_checkpointing, args.val_best,
                  device=device)
 
 
