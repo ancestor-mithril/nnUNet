@@ -404,7 +404,7 @@ def validate(args):
             "nnUNetv2_train "
             f"-p {envs['nnUNet_plans']} "
             f"-tr {envs['nnUNet_trainer']} "
-            f"--val -step_size_for_validation {step_size} "
+            f"--val -step_size_for_val {step_size} "
             f"{envs['nnUNet_dataset']} "
             f"{envs['nnUNet_conf']} "
             f"{args.fold} "
