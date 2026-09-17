@@ -420,18 +420,32 @@ def validate(args):
 
         labels_tr = os.path.join(raw_path, "labelsTr")
 
-        serialized_path = os.path.join(
-            validation_path,
-            "evaluation.json",
-        )
-        metrics_path = os.path.join(
-            validation_path,
-            "metrics.json",
-        )
-        report_path = os.path.join(
-            validation_path,
-            "metrics.txt",
-        )
+        if step_size != 0.5:
+            serialized_path = os.path.join(
+                os.path.join(fold_path, f"validation"),
+                f"evaluation_{step_size}.json",
+            )
+            metrics_path = os.path.join(
+                os.path.join(fold_path, f"validation"),
+                f"metrics_{step_size}.json",
+            )
+            report_path = os.path.join(
+                os.path.join(fold_path, f"validation"),
+                f"metrics_{step_size}.txt",
+            )
+        else:
+            serialized_path = os.path.join(
+                validation_path,
+                "evaluation.json",
+            )
+            metrics_path = os.path.join(
+                validation_path,
+                "metrics.json",
+            )
+            report_path = os.path.join(
+                validation_path,
+                "metrics.txt",
+            )
 
         result = evaluate_folders(
             prediction_folder=validation_path,
