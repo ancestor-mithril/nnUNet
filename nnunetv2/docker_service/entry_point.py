@@ -448,6 +448,8 @@ def validate(args):
                 raise RuntimeError("Validation failed during inference")
             with open(validation_done_path, "w") as f:
                 f.write(str(succeeded))
+        else:
+            print(f"Validation already done for {step_size}, {other}")
 
         labels_tr = os.path.join(raw_path, "labelsTr")
         save_folder = os.path.join(fold_path, f"validation")
