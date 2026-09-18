@@ -29,6 +29,7 @@ model_sizes_range = [
 
 def run_command(command, envs):
     command = command.strip()
+    print("Running command:", command)
     try:
         subprocess.run(command, env=envs, check=True, shell=True)
         return True
