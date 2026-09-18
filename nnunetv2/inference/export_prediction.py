@@ -24,6 +24,7 @@ def dilate_tromb(predicted_logits, tromb_label, background_label=0):
     tromb_mask = segmentation == tromb_label
 
     if not tromb_mask.any():
+        print("No tromb")
         return predicted_logits
 
     dilated_mask = binary_dilation(
@@ -34,8 +35,10 @@ def dilate_tromb(predicted_logits, tromb_label, background_label=0):
 
     to_add = dilated_mask & (segmentation == background_label)
     if not to_add.any():
+        print("Tromb couldn't be dilated")
         return predicted_logits
 
+    print("Pixels grown:", to_add.sum())
     if is_tensor:
         to_add = torch.as_tensor(to_add, device=predicted_logits.device)
 
@@ -45,6 +48,7 @@ def dilate_tromb(predicted_logits, tromb_label, background_label=0):
 
 def get_segmentation_and_probabilities(predicted_logits, label_manager: LabelManager, return_probabilities: bool):
     if os.getenv("DILATE_TROMB", "0") == "1":
+        print("Dilating tromb")
         if label_manager.has_regions:
             raise ValueError("DILATE_TROMB requires mutually exclusive classes.")
         tromb_label_value = os.getenv("DILATE_TROMB_LABEL")
