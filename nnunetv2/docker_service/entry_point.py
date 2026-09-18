@@ -401,6 +401,7 @@ def validate(args):
         (0.45, None),
     ]:
         print(f"Doing validation for {step_size}, {other}")
+
         def format_name(name, step_size, other):
             if step_size != 0.5 and other is not None:
                 return f"{name}_{step_size}_{other}"
@@ -414,6 +415,7 @@ def validate(args):
         validation_path = os.path.join(fold_path, validation_path_name)
         validation_done_path = os.path.join(validation_path, "done")
         validation_done = os.path.isfile(validation_done_path)
+        print("validation_path_name", validation_path_name)
 
         envs = {
             "NUM_EPOCHS": str(num_epochs),
@@ -425,12 +427,16 @@ def validate(args):
         if other is not None:
             print(f"Using other {other}")
             if other == "dilate_tromb":
+                print("Using dilate_tromb")
                 envs["DILATE_TROMB"] = "1"
                 tromb_index = get_class_index(labels, "tromboza")
                 if tromb_index == -1:
                     print(f"WARNING! Target not found in {labels}. Skipping {validation_path_name}!")
                     continue
                 envs["DILATE_TROMB_LABEL"] = str(tromb_index)
+            else:
+                print(f"NOT IMPLEMENTED! Skipping {validation_path_name}!")
+                continue
 
         command = (
             "nnUNetv2_train "
@@ -469,7 +475,7 @@ def validate(args):
             prediction_suffix=".nii.gz",
             ground_truth_prefix="",
             ground_truth_suffix=".nii.gz",
-            reorient=True,
+            reorient=False,
             workers=8,
         )
 
