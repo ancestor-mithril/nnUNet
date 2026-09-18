@@ -1297,7 +1297,7 @@ class nnUNetTrainer(object):
                 self.grad_scaler.load_state_dict(checkpoint['grad_scaler_state'])
 
     @torch.inference_mode()
-    def perform_actual_validation(self, save_probabilities: bool = False, step_size: float = 0.5):
+    def perform_actual_validation(self, save_probabilities: bool = False, step_size: float = 0.5, validation_path: str = "validation"):
         self.set_deep_supervision_enabled(False)
         self.network.eval()
 
@@ -1318,9 +1318,6 @@ class nnUNetTrainer(object):
                                         self.dataset_json, self.__class__.__name__,
                                         self.inference_allowed_mirroring_axes)
 
-        validation_path = 'validation'
-        if step_size != 0.5:
-            validation_path = f'{validation_path}_{step_size}'
         if os.getenv("sequential_validation", "1") == "1":
             validation_output_folder = join(self.output_folder, validation_path)
             maybe_mkdir_p(validation_output_folder)
