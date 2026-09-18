@@ -1319,6 +1319,7 @@ class nnUNetTrainer(object):
                                         self.inference_allowed_mirroring_axes)
 
         if os.getenv("sequential_validation", "1") == "1":
+            print(f"Validation written to {validation_path}")
             validation_output_folder = join(self.output_folder, validation_path)
             maybe_mkdir_p(validation_output_folder)
 
