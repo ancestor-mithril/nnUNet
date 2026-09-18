@@ -399,6 +399,7 @@ def validate(args):
         (0.35, None),
         (0.45, None),
     ]:
+        print(f"Doing validation for {step_size}, {other}")
         def format_name(name, step_size, other):
             if step_size != 0.5 and other is not None:
                 return f"{name}_{step_size}_{other}"
