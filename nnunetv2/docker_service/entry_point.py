@@ -107,9 +107,10 @@ def inference(args):
         raise FileNotFoundError(f"Folder {args.output} is not available")
 
     print(f"Cuda Available: {torch.cuda.is_available()}")
-    succeeded = try_inference(args.input, args.output, folds, use_cuda=True, device_index=args.device, step_size=args.step_size)
+    succeeded = try_inference(args.input, args.output, folds, use_cuda=True, device_index=args.device,
+                              step_size=args.step_size)
     if not succeeded:
-        succeeded = try_inference(args.input, args.output, folds, use_cuda=False,step_size=args.step_size)
+        succeeded = try_inference(args.input, args.output, folds, use_cuda=False, step_size=args.step_size)
         if not succeeded:
             print("Inference failed. Check the logs for the error")
             raise RuntimeError("Inference failed")
@@ -293,20 +294,28 @@ def validate_num_epochs(num_epochs, num_epochs_path, save=False):
                            f"Use a different folder when training with {num_epochs} epochs.")
 
 
-def handle_wl1(dataset_json, envs):
-    with open(dataset_json, "r") as f:
-        labels = json.load(f)["labels"]
-    envs["NN_CLASS_WEIGHTS_LEN"] = str(len(labels))
-    found_target = False
+def get_class_index(labels, label_name):
     for i, label in enumerate(labels):
-        if label == "tromboza":
-            found_target = True
-            envs[f"NN_CLASS_WEIGHTS_{i}"] = str(len(labels))
-        else:
-            envs[f"NN_CLASS_WEIGHTS_{i}"] = "1"
-    if not found_target:
+        if label == label_name:
+            return i
+    return -1
+
+
+def get_labels_from_dataset(dataset_json):
+    with open(dataset_json, "r") as f:
+        return json.load(f)["labels"]
+
+
+def handle_wl1(dataset_json, envs):
+    labels = get_labels_from_dataset(dataset_json)
+    n = len(labels)
+    envs["NN_CLASS_WEIGHTS_LEN"] = str(n)
+    tromboza_index = get_class_index(labels, "tromboza")
+    if tromboza_index == -1:
         print(f"WARNING! Target not found in {labels}. Using last one ({labels[-1]} as the target for wl1.")
-        envs[f"NN_CLASS_WEIGHTS_{len(labels) - 1}"] = str(len(labels))
+        tromboza_index = n - 1
+    for i in range(n):
+        envs[f"NN_CLASS_WEIGHTS_{i}"] = "1" if i != tromboza_index else str(n)
 
 
 def train(args):
@@ -361,8 +370,7 @@ def validate(args):
     dataset_json = os.path.join(preprocess_path, "dataset.json")
     json_num_epochs = os.path.join(model_path, "num_epochs.json")
     raw_path = os.getenv("cont_data_path")
-    with open(dataset_json, "r") as f:
-        labels = json.load(f)["labels"]
+    labels = get_labels_from_dataset(dataset_json)
 
     if not os.path.isdir(preprocess_path):
         raise FileNotFoundError(f"Folder {preprocess_path} is not available. Run preprocessing first!")
@@ -385,15 +393,23 @@ def validate(args):
     if not os.path.isfile(model_checkpoint):
         raise FileNotFoundError(f"Model checkpoint {model_checkpoint} not available, please train the model first")
 
-    for step_size in [
-        0.5, # Must be first
-        0.35,
-        0.45,
+    for step_size, other in [
+        (0.5, None),  # Must be first
+        (0.5, "dilate_tromb"),
+        (0.35, None),
+        (0.45, None),
     ]:
-        if step_size != 0.5:
-            validation_path = os.path.join(fold_path, f"validation_{step_size}")
-        else:
-            validation_path = os.path.join(fold_path, f"validation")
+        def format_name(name, step_size, other):
+            if step_size != 0.5 and other is not None:
+                return f"{name}_{step_size}_{other}"
+            if step_size != 0.5:
+                return f"{name}_{step_size}"
+            if other is not None:
+                return f"{name}_{other}"
+            return name
+
+        validation_path_name = format_name("validation", step_size, other)
+        validation_path = os.path.join(fold_path, validation_path_name)
         validation_done_path = os.path.join(validation_path, "done")
         validation_done = os.path.isfile(validation_done_path)
 
@@ -404,6 +420,16 @@ def validate(args):
             "USE_HALF": "1",
             **os.environ,
         }
+        if other is not None:
+            print(f"Using other {other}")
+            if other == "dilate_tromb":
+                envs["DILATE_TROMB"] = "1"
+                tromb_index = get_class_index(labels, "tromboza")
+                if tromb_index == -1:
+                    print(f"WARNING! Target not found in {labels}. Skipping {validation_path_name}!")
+                    continue
+                envs["DILATE_TROMB_LABEL"] = str(tromb_index)
+
         command = (
             "nnUNetv2_train "
             f"-p {envs['nnUNet_plans']} "
@@ -423,33 +449,13 @@ def validate(args):
                 f.write(str(succeeded))
 
         labels_tr = os.path.join(raw_path, "labelsTr")
+        save_folder = os.path.join(fold_path, f"validation")
+        evaluation_name = format_name("evaluation", step_size, other)
+        metrics_name = format_name("metrics", step_size, other)
 
-        if step_size != 0.5:
-            serialized_path = os.path.join(
-                os.path.join(fold_path, f"validation"),
-                f"evaluation_{step_size}.json",
-            )
-            metrics_path = os.path.join(
-                os.path.join(fold_path, f"validation"),
-                f"metrics_{step_size}.json",
-            )
-            report_path = os.path.join(
-                os.path.join(fold_path, f"validation"),
-                f"metrics_{step_size}.txt",
-            )
-        else:
-            serialized_path = os.path.join(
-                validation_path,
-                "evaluation.json",
-            )
-            metrics_path = os.path.join(
-                validation_path,
-                "metrics.json",
-            )
-            report_path = os.path.join(
-                validation_path,
-                "metrics.txt",
-            )
+        serialized_path = os.path.join(save_folder, f"{evaluation_name}.json")
+        metrics_path = os.path.join(save_folder, f"{metrics_name}.json")
+        report_path = os.path.join(save_folder, f"{metrics_name}.txt")
 
         result = evaluate_folders(
             prediction_folder=validation_path,

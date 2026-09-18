@@ -4,6 +4,7 @@ from typing import Union, List
 
 import numpy as np
 import torch
+from scipy.ndimage import binary_dilation, generate_binary_structure
 from acvl_utils.cropping_and_padding.bounding_boxes import insert_crop_into_image
 from batchgenerators.utilities.file_and_folder_operations import load_json, save_pickle
 
@@ -14,7 +15,44 @@ from nnunetv2.utilities.logging import perf_logger
 from nnunetv2.utilities.plans_handling.plans_handler import PlansManager, ConfigurationManager
 
 
+def dilate_tromb(predicted_logits, tromb_label, background_label=0):
+    is_tensor = isinstance(predicted_logits, torch.Tensor)
+
+    segmentation = predicted_logits.argmax(0)
+    if is_tensor:
+        segmentation = segmentation.cpu().numpy()
+    tromb_mask = segmentation == tromb_label
+
+    if not tromb_mask.any():
+        return predicted_logits
+
+    dilated_mask = binary_dilation(
+        tromb_mask,
+        structure=generate_binary_structure(segmentation.ndim, 1),
+        iterations=1,
+    )
+
+    to_add = dilated_mask & (segmentation == background_label)
+    if not to_add.any():
+        return predicted_logits
+
+    if is_tensor:
+        to_add = torch.as_tensor(to_add, device=predicted_logits.device)
+
+    predicted_logits[tromb_label, to_add] = predicted_logits[background_label, to_add] + 1.0
+    return predicted_logits
+
+
 def get_segmentation_and_probabilities(predicted_logits, label_manager: LabelManager, return_probabilities: bool):
+    if os.getenv("DILATE_TROMB", "0") == "1":
+        if label_manager.has_regions:
+            raise ValueError("DILATE_TROMB requires mutually exclusive classes.")
+        tromb_label_value = os.getenv("DILATE_TROMB_LABEL")
+
+        predicted_logits = dilate_tromb(
+            predicted_logits, tromb_label=int(tromb_label_value)
+        )
+
     if not return_probabilities:
         # this has a faster computation path becasue we can skip the softmax in regular (not region based) trainig
         return label_manager.convert_logits_to_segmentation(predicted_logits), None
