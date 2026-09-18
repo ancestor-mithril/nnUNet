@@ -385,7 +385,11 @@ def validate(args):
     if not os.path.isfile(model_checkpoint):
         raise FileNotFoundError(f"Model checkpoint {model_checkpoint} not available, please train the model first")
 
-    for step_size in [0.35, 0.5]:
+    for step_size in [
+        0.5, # Must be first
+        0.35,
+        0.45,
+    ]:
         if step_size != 0.5:
             validation_path = os.path.join(fold_path, f"validation_{step_size}")
         else:
