@@ -38,7 +38,7 @@ def dilate_tromb(predicted_logits, tromb_label, background_label=0):
         perf_logger.info("Tromb couldn't be dilated")
         return predicted_logits
 
-    perf_logger.info("Pixels grown:", to_add.sum())
+    perf_logger.info(f"Pixels grown: {to_add.sum()}")
     if is_tensor:
         to_add = torch.as_tensor(to_add, device=predicted_logits.device)
 
