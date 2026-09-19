@@ -489,6 +489,9 @@ def validate(args):
 
 
 def cross_validate(args):
+    print("Sleeping for 20 seconds...")
+    import time
+    time.sleep(20)
     model_path = os.getenv("cont_model_path")
     output = os.getenv("cont_output_path")
 
