@@ -3,12 +3,13 @@ import glob
 import json
 import os
 import subprocess
+import time
 
-import numpy as np
 import SimpleITK as sitk
+import numpy as np
 import torch.accelerator
-from tqdm import tqdm
 from label_metrics import evaluate_folders, KFoldResult
+from tqdm import tqdm
 
 num_epochs_range = [
     "1",
@@ -490,8 +491,8 @@ def validate(args):
 
 def cross_validate(args):
     print("Sleeping for 20 seconds...")
-    import time
     time.sleep(20)
+
     model_path = os.getenv("cont_model_path")
     output = os.getenv("cont_output_path")
 
@@ -505,7 +506,8 @@ def cross_validate(args):
             f"Folder {output} is not available."
         )
 
-    fold_paths = {}
+    validation_paths = {}
+    evaluation_files = []
 
     for fold in range(5):
         fold_name = f"fold_{fold}"
@@ -542,24 +544,58 @@ def cross_validate(args):
                 "Please validate the model first."
             )
 
-        fold_paths[fold_name] = evaluation_path
+        validation_paths[fold_name] = validation_path
 
-    result = KFoldResult.load(fold_paths)
+        fold_evaluation_files = {
+            os.path.basename(path)
+            for path in glob.glob(
+                os.path.join(validation_path, "evaluation_*.json")
+            )
+            if os.path.isfile(path)
+        }
+        evaluation_files.append(fold_evaluation_files)
 
-    metrics_path = os.path.join(
-        output,
-        "kfold_metrics.json",
+    # evaluation.json is mandatory and always processed.
+    common_evaluation_files = {"evaluation.json"}
+
+    # Additional files are processed only if present in every fold.
+    common_evaluation_files.update(
+        set.intersection(*evaluation_files)
     )
-    report_path = os.path.join(
-        output,
-        "kfold_metrics.txt",
-    )
 
-    result.save_metrics_json(metrics_path)
-    result.save_text_report(report_path)
+    for evaluation_file in sorted(common_evaluation_files):
+        print("Report for", evaluation_file)
+        fold_paths = {
+            fold_name: os.path.join(
+                validation_path,
+                evaluation_file,
+            )
+            for fold_name, validation_path in validation_paths.items()
+        }
 
-    print(f"K-fold metrics written to {metrics_path}")
-    print(f"K-fold report written to {report_path}")
+        result = KFoldResult.load(fold_paths)
+
+        if evaluation_file == "evaluation.json":
+            suffix = ""
+        else:
+            suffix = evaluation_file[
+                len("evaluation"):-len(".json")
+            ]
+
+        metrics_path = os.path.join(
+            output,
+            f"kfold_metrics{suffix}.json",
+        )
+        report_path = os.path.join(
+            output,
+            f"kfold_metrics{suffix}.txt",
+        )
+
+        result.save_metrics_json(metrics_path)
+        result.save_text_report(report_path)
+
+        print(f"K-fold metrics written to {metrics_path}")
+        print(f"K-fold report written to {report_path}")
 
 
 def props(_):
