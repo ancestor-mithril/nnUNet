@@ -32,6 +32,7 @@ ENV copy_elision=1
 ENV IGNORE_INF=0
 ENV PERF_LOGGER=1
 ENV num_val_iterations_per_epoch=1
+ENV nn_resampling_nn=1
 
 ENV nnUNet_raw=/app/nnUNet_raw
 ENV nnUNet_results=/app/nnUNet_results
