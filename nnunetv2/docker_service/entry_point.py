@@ -89,7 +89,6 @@ def inference(args):
     args.step_size = 1.0
     if args.fold == "ensemble":
         folds = ["0", "1", "2", "3", "4"]
-        folds = ["0"]
     else:
         folds = [args.fold]
     for fold in folds:
@@ -104,6 +103,8 @@ def inference(args):
         if not os.path.isfile(model_checkpoint):
             raise FileNotFoundError(f"Model checkpoint {model_checkpoint} not available, please train the model first")
 
+    if args.fold == "ensemble":
+        folds = ["0"]
     files = glob.glob(os.path.join(args.input, "*_0000.nii.gz"))
     if len(files) == 0:
         raise FileNotFoundError(f"Found no _0000.nii.gz files in {args.input}")
