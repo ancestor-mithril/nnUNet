@@ -86,8 +86,10 @@ def inference(args):
     if args.step_size != 0.0 and (args.step_size < 0.1 or args.step_size > 1.0):
         raise RuntimeError(f"step_size can't be lower than 0.1 or bigger than 1.0, is {args.step_size}")
     model_path = os.getenv("cont_model_path")
+    args.step_size = 1.0
     if args.fold == "ensemble":
         folds = ["0", "1", "2", "3", "4"]
+        folds = ["0"]
     else:
         folds = [args.fold]
     for fold in folds:
