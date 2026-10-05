@@ -86,7 +86,7 @@ def inference(args):
     if args.step_size != 0.0 and (args.step_size < 0.1 or args.step_size > 1.0):
         raise RuntimeError(f"step_size can't be lower than 0.1 or bigger than 1.0, is {args.step_size}")
     model_path = os.getenv("cont_model_path")
-    args.step_size = 1.0
+    # args.step_size = 1.0
     if args.fold == "ensemble":
         folds = ["0", "1", "2", "3", "4"]
     else:
@@ -103,8 +103,9 @@ def inference(args):
         if not os.path.isfile(model_checkpoint):
             raise FileNotFoundError(f"Model checkpoint {model_checkpoint} not available, please train the model first")
 
-    if args.fold == "ensemble":
-        folds = ["0"]
+    # if args.fold == "ensemble":
+    #     folds = ["0"]
+
     files = glob.glob(os.path.join(args.input, "*_0000.nii.gz"))
     if len(files) == 0:
         raise FileNotFoundError(f"Found no _0000.nii.gz files in {args.input}")
@@ -400,8 +401,8 @@ def validate(args):
 
     for step_size, other in [
         (0.5, None),  # Must be first
-        (0.5, "dilate_tromb"),
-        (0.35, None),
+        # (0.5, "dilate_tromb"),
+        # (0.35, None),
         (0.45, None),
     ]:
         print(f"Doing validation for {step_size}, {other}")

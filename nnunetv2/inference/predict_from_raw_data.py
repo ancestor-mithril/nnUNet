@@ -43,6 +43,9 @@ import inspect
 
 timer_data = dict()
 
+def is_finite(x):
+    return torch.all(torch.isfinite(x))
+
 class Timer:
     def __init__(self, name):
         self.verbose = False
@@ -76,6 +79,7 @@ class nnUNetPredictor(object):
                  verbose: bool = False,
                  verbose_preprocessing: bool = False,
                  allow_tqdm: bool = True):
+        self.is_finite = is_finite
         self.keep_model_on_cpu = False
         self.networks = []
         self.use_tensor_rt = False
@@ -709,7 +713,7 @@ class nnUNetPredictor(object):
         # check for infs
         check_for_inf = os.getenv("IGNORE_INF", "0") == "0"
         perf_logger.info(f"Checking for inf in {predicted_logits.shape}: {check_for_inf}")
-        if check_for_inf and not torch.all(torch.isfinite(predicted_logits)):
+        if check_for_inf and not is_finite(predicted_logits):
             raise RuntimeError(f'Encountered inf in predicted array: '
                                f'isnan: {torch.isnan(predicted_logits)}, isinf: {torch.isinf(predicted_logits)}. '
                                f'Aborting... If this problem persists, '
@@ -813,7 +817,10 @@ class nnUNetPredictor(object):
             seg_from_prev_stage_files = [None] * len(list_of_lists_or_source_folder)
 
         ret = []
-        for li, of, sps in tqdm(list(zip(list_of_lists_or_source_folder, output_filename_truncated, seg_from_prev_stage_files)), desc="Inference bar"):
+        all_files = list(zip(list_of_lists_or_source_folder, output_filename_truncated, seg_from_prev_stage_files))
+        if len(all_files) > 1:
+            self.is_finite = torch.compile(self.is_finite)
+        for li, of, sps in tqdm(all_files, desc="Inference bar"):
             print("Case", li[0].split("/")[-1])
             data, _, data_properties = preprocessor.run_case(
                 li,
