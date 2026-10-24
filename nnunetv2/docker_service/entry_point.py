@@ -47,7 +47,6 @@ def try_inference(input_path: str, output_path: str, folds: list[str], use_cuda:
     else:
         print(f"Using cpu for inference")
 
-
     envs = {
         "USE_HALF": "1" if use_cuda else "0",
         "USE_TENSOR_RT": "1" if use_cuda and inference_mode == "fast" else "0",
@@ -116,7 +115,8 @@ def inference(args):
         raise FileNotFoundError(f"Folder {args.output} is not available")
 
     print(f"Cuda Available: {torch.cuda.is_available()}")
-    succeeded = try_inference(args.input, args.output, folds, use_cuda=True, device_index=args.device,
+    succeeded = try_inference(args.input, args.output, folds, use_cuda=True if args.device != "cpu" else False,
+                              device_index=args.device,
                               step_size=args.step_size, inference_mode=args.inference_mode)
     if not succeeded:
         print("Inference failed. Check the logs for the error")
