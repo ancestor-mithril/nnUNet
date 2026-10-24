@@ -7,8 +7,8 @@ def entry_point():
     parser = argparse.ArgumentParser()
     parser.add_argument("-docker_app", type=str, required=True,
                         help="Folder in which to create the docker app")
-    parser.add_argument("-base_docker_image", type=str, required=False, default="cuda12.9:py3.13_torch2.8.0",
-                        help="Base docker image")
+    parser.add_argument("-base_docker_image", type=str, required=False, default="nnunet-base:py313-cu132",
+                        help="Base docker image. Old was cuda12.9:py3.13_torch2.8.0")
     args = parser.parse_args()
 
     if os.path.isdir(args.docker_app) and len(os.listdir(args.docker_app)) != 0:
