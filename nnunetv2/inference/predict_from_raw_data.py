@@ -193,6 +193,9 @@ class nnUNetPredictor(object):
                         torch_tensorrt.Input(shape=input_shape, dtype=torch.float16)
                     ],
                     enabled_precisions={torch.float16},
+                    optimization_level=5,
+                    require_full_compilation=True,
+                    immutable_weights=True,
                 )
                 perf_logger.info("Compile done")
             elif use_compile:
