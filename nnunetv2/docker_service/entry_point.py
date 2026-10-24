@@ -651,7 +651,7 @@ def main():
 
     parser_inference = subparsers.add_parser("inference", help="Do inference")
     parser_inference.add_argument("-fold", type=str, help="Fold", default="0")
-    parser_inference.add_argument("-device", type=int, help="CUDA device index", default=0)
+    parser_inference.add_argument("-device", type=str, help="CUDA device index", default=0)
     parser_inference.add_argument("-step_size", type=float, default=float(os.getenv("nnUNet_step_size", "0.5")))
     parser_inference.add_argument("-inference_mode", type=str, default="slow", choices=["slow", "fast"])
     parser_inference.set_defaults(func=inference, input=os.getenv("cont_input_path"),
@@ -666,13 +666,13 @@ def main():
 
     parser_train = subparsers.add_parser("train", help="Do training")
     parser_train.add_argument("-fold", type=str, help="Fold", default="0")
-    parser_train.add_argument("-device", type=int, help="CUDA device index", default=0)
+    parser_train.add_argument("-device", type=str, help="CUDA device index", default=0)
     parser_train.add_argument("-num_epochs", type=str, help="Number of epochs", default=1000, choices=num_epochs_range)
     parser_train.set_defaults(func=train)
 
     parser_train = subparsers.add_parser("validate", help="Do validation for existing training")
     parser_train.add_argument("-fold", type=str, help="Fold", default="0")
-    parser_train.add_argument("-device", type=int, help="CUDA device index", default=0)
+    parser_train.add_argument("-device", type=str, help="CUDA device index", default=0)
     parser_train.add_argument("-num_epochs", type=str, help="Number of epochs", default=1000, choices=num_epochs_range)
     parser_train.set_defaults(func=validate)
 
