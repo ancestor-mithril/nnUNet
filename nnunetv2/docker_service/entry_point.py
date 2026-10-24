@@ -40,17 +40,20 @@ def run_command(command, envs):
 
 
 def try_inference(input_path: str, output_path: str, folds: list[str], use_cuda: bool = False, device_index: int = 0,
-                  use_best: bool = False, step_size=0.5):
+                  use_best: bool = False, step_size=0.5, inference_mode: str = "slow"):
     fold = " ".join(folds)
     if use_cuda:
         print(f"Using cuda device {device_index} for inference!")
     else:
         print(f"Using cpu for inference")
 
+
     envs = {
         "USE_HALF": "1" if use_cuda else "0",
+        "USE_TENSOR_RT": "1" if use_cuda and inference_mode == "fast" else "0",
         **os.environ
     }
+
     print("Using step_size:", step_size)
 
     if use_cuda:
@@ -114,9 +117,11 @@ def inference(args):
 
     print(f"Cuda Available: {torch.cuda.is_available()}")
     succeeded = try_inference(args.input, args.output, folds, use_cuda=True, device_index=args.device,
-                              step_size=args.step_size)
+                              step_size=args.step_size, inference_mode=args.inference_mode)
     if not succeeded:
-        succeeded = try_inference(args.input, args.output, folds, use_cuda=False, step_size=args.step_size)
+        print("Inference failed. Check the logs for the error")
+        succeeded = try_inference(args.input, args.output, folds, use_cuda=False, step_size=args.step_size,
+                                  inference_mode=args.inference_mode)
         if not succeeded:
             print("Inference failed. Check the logs for the error")
             raise RuntimeError("Inference failed")
@@ -648,6 +653,7 @@ def main():
     parser_inference.add_argument("-fold", type=str, help="Fold", default="0")
     parser_inference.add_argument("-device", type=int, help="CUDA device index", default=0)
     parser_inference.add_argument("-step_size", type=float, default=float(os.getenv("nnUNet_step_size", "0.5")))
+    parser_inference.add_argument("-inference_mode", type=str, default="slow", choices=["slow", "fast"])
     parser_inference.set_defaults(func=inference, input=os.getenv("cont_input_path"),
                                   output=os.getenv("cont_output_path"))
 
