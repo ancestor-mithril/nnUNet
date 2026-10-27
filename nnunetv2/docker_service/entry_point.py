@@ -389,6 +389,9 @@ def train(args):
     if parts is not None:
         print(f"Using parts {parts}")
         if parts[1] == "wl1":
+            parts[1] = "deep"  # Temp fix
+
+        if parts[1] == "wl1":
             print("Using wl1")
             handle_wl1(dataset_json, envs)
         elif parts[1] == "deep":
