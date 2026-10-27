@@ -330,7 +330,7 @@ def handle_wl1(dataset_json, envs):
         envs[f"NN_CLASS_WEIGHTS_{i}"] = "1" if i != tromboza_index else str(n)
 
 
-def update_depth(path, new_depth, config="3d_fullres"):
+def update_network_config(path, enc=None, dec=None, features=None, config="3d_fullres"):
     with open(path) as f:
         plans = json.load(f)
 
@@ -341,15 +341,28 @@ def update_depth(path, new_depth, config="3d_fullres"):
     print("n_blocks_per_stage", arch["n_blocks_per_stage"])
     print("n_conv_per_stage_decoder", arch["n_conv_per_stage_decoder"])
 
-    if len(new_depth) != arch["n_stages"]:
-        raise ValueError(f"new_depth must contain {arch['n_stages']} values")
+    if enc and len(enc) != len(arch["n_blocks_per_stage"]):
+        raise ValueError(f"enc must contain {len(arch['n_blocks_per_stage'])} values")
+    if dec and len(dec) != len(arch["n_conv_per_stage_decoder"]):
+        raise ValueError(f"dec_must contain {len(arch['n_conv_per_stage_decoder'])} values")
+    if features and len(features) != len(arch["features_per_stage"]):
+        raise ValueError(f"features_must contain {len(arch['features_per_stage'])} values")
 
-    arch["n_blocks_per_stage"] = new_depth
+    if enc:
+        arch["n_blocks_per_stage"] = enc
+    if dec:
+        arch["n_conv_per_stage_decoder"] = dec
+    if features:
+        arch["features_per_stage"] = features
+
+    print("Updated")
+    print("n_stages", arch["n_stages"])
+    print("features_per_stage", arch["features_per_stage"])
+    print("n_blocks_per_stage", arch["n_blocks_per_stage"])
+    print("n_conv_per_stage_decoder", arch["n_conv_per_stage_decoder"])
 
     with open(path, "w") as f:
         json.dump(plans, f, indent=4)
-
-    print("Updated n_blocks_per_stage: ", new_depth)
 
 
 def train(args):
@@ -380,7 +393,10 @@ def train(args):
             handle_wl1(dataset_json, envs)
         elif parts[1] == "deep":
             print("Using deeper")
-            update_depth(os.path.join(preprocess_path, "nnUNetResEncUNetLPlans_torchres.json"), [])
+            update_network_config(os.path.join(preprocess_path, "nnUNetResEncUNetLPlans_torchres.json"),
+                         enc=[1, 3, 4, 8, 8, 8],
+                         dec=[2, 2, 1, 1, 1]
+            )
             raise RuntimeError("Training failed. Check the logs for the error")
         else:
             print("Unknown parts[1]")
