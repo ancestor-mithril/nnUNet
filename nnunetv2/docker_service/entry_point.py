@@ -329,6 +329,28 @@ def handle_wl1(dataset_json, envs):
         envs[f"NN_CLASS_WEIGHTS_{i}"] = "1" if i != tromboza_index else str(n)
 
 
+def update_depth(path, new_depth, config="3d_fullres"):
+    with open(path) as f:
+        plans = json.load(f)
+
+    arch = plans["configurations"][config]["architecture"]["arch_kwargs"]
+
+    print("n_stages", arch["n_stages"])
+    print("features_per_stage", arch["features_per_stage"])
+    print("n_blocks_per_stage", arch["n_blocks_per_stage"])
+    print("n_conv_per_stage_decoder", arch["n_conv_per_stage_decoder"])
+
+    if len(new_depth) != arch["n_stages"]:
+        raise ValueError(f"new_depth must contain {arch['n_stages']} values")
+
+    # arch["n_blocks_per_stage"] = new_depth
+
+    # with open(path, "w") as f:
+    #     json.dump(plans, f, indent=4)
+    #
+    # print("Updated n_blocks_per_stage: ", new_depth)
+
+
 def train(args):
     preprocess_path = os.getenv("cont_preproc_path")
     model_path = os.getenv("cont_model_path")
@@ -403,6 +425,7 @@ def validate(args):
         raise FileNotFoundError(f"Fold {fold_path} not available, please train the model first")
     if not os.path.isfile(model_checkpoint):
         raise FileNotFoundError(f"Model checkpoint {model_checkpoint} not available, please train the model first")
+    update_depth(os.path.join(preprocess_path, "nnUNetResEncUNetLPlans_torchres.json"), [])
 
     for step_size, other in [
         (0.5, None),  # Must be first
