@@ -24,9 +24,19 @@ num_epochs_range = [
     "2000",
     "4000"
 ]
-model_sizes_range = [
-    8, 12, 18, 24, 32
+
+deep_sizes = [
+    18,
+    26,
 ]
+std_sizes = [
+    8,
+    12,
+    16,
+    24,
+    32
+]
+model_sizes_range = list(sorted(deep_sizes + std_sizes))
 
 
 def run_command(command, envs):
@@ -193,6 +203,41 @@ def load_labels(labels_json):
         raise RuntimeError(error_msg) from e
 
 
+def update_network_config(path, enc=None, dec=None, features=None, config="3d_fullres"):
+    with open(path) as f:
+        plans = json.load(f)
+
+    arch = plans["configurations"][config]["architecture"]["arch_kwargs"]
+
+    print("n_stages", arch["n_stages"])
+    print("features_per_stage", arch["features_per_stage"])
+    print("n_blocks_per_stage", arch["n_blocks_per_stage"])
+    print("n_conv_per_stage_decoder", arch["n_conv_per_stage_decoder"])
+
+    if enc and len(enc) != len(arch["n_blocks_per_stage"]):
+        raise ValueError(f"enc must contain {len(arch['n_blocks_per_stage'])} values")
+    if dec and len(dec) != len(arch["n_conv_per_stage_decoder"]):
+        raise ValueError(f"dec_must contain {len(arch['n_conv_per_stage_decoder'])} values")
+    if features and len(features) != len(arch["features_per_stage"]):
+        raise ValueError(f"features_must contain {len(arch['features_per_stage'])} values")
+
+    if enc:
+        arch["n_blocks_per_stage"] = enc
+    if dec:
+        arch["n_conv_per_stage_decoder"] = dec
+    if features:
+        arch["features_per_stage"] = features
+
+    print("Updated")
+    print("n_stages", arch["n_stages"])
+    print("features_per_stage", arch["features_per_stage"])
+    print("n_blocks_per_stage", arch["n_blocks_per_stage"])
+    print("n_conv_per_stage_decoder", arch["n_conv_per_stage_decoder"])
+
+    with open(path, "w") as f:
+        json.dump(arch, f, indent=4)
+
+
 def preprocess(args):
     raw_path = os.getenv("cont_data_path")
     images_tr = os.path.join(raw_path, "imagesTr")
@@ -264,6 +309,14 @@ def preprocess(args):
     if not succeeded:
         print("Preprocess failed. Check the logs for the error")
         raise RuntimeError("Preprocess failed")
+
+    if args.model_size in deep_sizes:
+        print("Using DEEP size")
+        update_network_config(
+            os.path.join(preprocess_path, "nnUNetResEncUNetLPlans_torchres.json"),
+            enc=[1, 3, 4, 8, 8, 8],
+            dec=[2, 2, 1, 1, 1],
+        )
     command = (
         "nnUNetv2_train "
         f"-p {envs['nnUNet_plans']} "
@@ -330,41 +383,6 @@ def handle_wl1(dataset_json, envs):
         envs[f"NN_CLASS_WEIGHTS_{i}"] = "1" if i != tromboza_index else str(n)
 
 
-def update_network_config(path, enc=None, dec=None, features=None, config="3d_fullres"):
-    with open(path) as f:
-        plans = json.load(f)
-
-    arch = plans["configurations"][config]["architecture"]["arch_kwargs"]
-
-    print("n_stages", arch["n_stages"])
-    print("features_per_stage", arch["features_per_stage"])
-    print("n_blocks_per_stage", arch["n_blocks_per_stage"])
-    print("n_conv_per_stage_decoder", arch["n_conv_per_stage_decoder"])
-
-    if enc and len(enc) != len(arch["n_blocks_per_stage"]):
-        raise ValueError(f"enc must contain {len(arch['n_blocks_per_stage'])} values")
-    if dec and len(dec) != len(arch["n_conv_per_stage_decoder"]):
-        raise ValueError(f"dec_must contain {len(arch['n_conv_per_stage_decoder'])} values")
-    if features and len(features) != len(arch["features_per_stage"]):
-        raise ValueError(f"features_must contain {len(arch['features_per_stage'])} values")
-
-    if enc:
-        arch["n_blocks_per_stage"] = enc
-    if dec:
-        arch["n_conv_per_stage_decoder"] = dec
-    if features:
-        arch["features_per_stage"] = features
-
-    print("Updated")
-    print("n_stages", arch["n_stages"])
-    print("features_per_stage", arch["features_per_stage"])
-    print("n_blocks_per_stage", arch["n_blocks_per_stage"])
-    print("n_conv_per_stage_decoder", arch["n_conv_per_stage_decoder"])
-
-    with open(path, "w") as f:
-        json.dump(plans, f, indent=4)
-
-
 def train(args):
     preprocess_path = os.getenv("cont_preproc_path")
     model_path = os.getenv("cont_model_path")
@@ -384,6 +402,7 @@ def train(args):
     envs = {
         "NUM_EPOCHS": str(num_epochs),
         "CUDA_VISIBLE_DEVICES": str(args.device),
+        "nnUNet_plans_updated": "0",
         **os.environ,
     }
     if parts is not None:
@@ -394,13 +413,6 @@ def train(args):
         if parts[1] == "wl1":
             print("Using wl1")
             handle_wl1(dataset_json, envs)
-        elif parts[1] == "deep":
-            print("Using deeper")
-            update_network_config(os.path.join(preprocess_path, "nnUNetResEncUNetLPlans_torchres.json"),
-                         enc=[1, 3, 4, 8, 8, 8],
-                         dec=[2, 2, 1, 1, 1]
-            )
-            raise RuntimeError("Training failed. Check the logs for the error")
         else:
             print("Unknown parts[1]")
     command = (
