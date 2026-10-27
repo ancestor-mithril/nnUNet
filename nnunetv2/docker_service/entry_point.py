@@ -235,7 +235,7 @@ def update_network_config(path, enc=None, dec=None, features=None, config="3d_fu
     print("n_conv_per_stage_decoder", arch["n_conv_per_stage_decoder"])
 
     with open(path, "w") as f:
-        json.dump(arch, f, indent=4)
+        json.dump(plans, f, indent=4)
 
 
 def preprocess(args):
