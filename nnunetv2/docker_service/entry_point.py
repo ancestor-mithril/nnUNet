@@ -20,6 +20,7 @@ num_epochs_range = [
     "750",
     "1000",
     "1000_wl1",
+    "1000_deep",
     "2000",
     "4000"
 ]
@@ -343,12 +344,12 @@ def update_depth(path, new_depth, config="3d_fullres"):
     if len(new_depth) != arch["n_stages"]:
         raise ValueError(f"new_depth must contain {arch['n_stages']} values")
 
-    # arch["n_blocks_per_stage"] = new_depth
+    arch["n_blocks_per_stage"] = new_depth
 
-    # with open(path, "w") as f:
-    #     json.dump(plans, f, indent=4)
-    #
-    # print("Updated n_blocks_per_stage: ", new_depth)
+    with open(path, "w") as f:
+        json.dump(plans, f, indent=4)
+
+    print("Updated n_blocks_per_stage: ", new_depth)
 
 
 def train(args):
@@ -377,6 +378,10 @@ def train(args):
         if parts[1] == "wl1":
             print("Using wl1")
             handle_wl1(dataset_json, envs)
+        elif parts[1] == "deep":
+            print("Using deeper")
+            update_depth(os.path.join(preprocess_path, "nnUNetResEncUNetLPlans_torchres.json"), [])
+            raise RuntimeError("Training failed. Check the logs for the error")
         else:
             print("Unknown parts[1]")
     command = (
@@ -425,7 +430,6 @@ def validate(args):
         raise FileNotFoundError(f"Fold {fold_path} not available, please train the model first")
     if not os.path.isfile(model_checkpoint):
         raise FileNotFoundError(f"Model checkpoint {model_checkpoint} not available, please train the model first")
-    update_depth(os.path.join(preprocess_path, "nnUNetResEncUNetLPlans_torchres.json"), [])
 
     for step_size, other in [
         (0.5, None),  # Must be first
