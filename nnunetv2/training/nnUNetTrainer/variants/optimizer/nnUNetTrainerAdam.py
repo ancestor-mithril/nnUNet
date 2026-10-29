@@ -1,3 +1,5 @@
+import os
+
 import torch
 from torch.optim import Adam, AdamW, Optimizer
 
@@ -80,6 +82,15 @@ class nnUNetTrainerMuon_1e3(nnUNetTrainerMuon):
                  device: torch.device = torch.device('cuda')):
         super().__init__(plans, configuration, fold, dataset_json, device)
         self.initial_lr = 1e-3
+
+
+class nnUNetTrainerMuon_Bayesian(nnUNetTrainerMuon):
+    def __init__(self, plans: dict, configuration: str, fold: int, dataset_json: dict,
+                 device: torch.device = torch.device('cuda')):
+        super().__init__(plans, configuration, fold, dataset_json, device)
+        self.initial_lr = float(os.getenv("bayesian_lr", "0.0"))
+        if self.initial_lr == 0.0:
+            raise RuntimeError('Initial learning rate cannot be 0.0')
 
 
 
