@@ -74,6 +74,15 @@ class nnUNetTrainerMuon(nnUNetTrainerAdam):
         return optimizer, lr_scheduler
 
 
+
+class nnUNetTrainerMuon_1e3(nnUNetTrainerMuon):
+    def __init__(self, plans: dict, configuration: str, fold: int, dataset_json: dict,
+                 device: torch.device = torch.device('cuda')):
+        super().__init__(plans, configuration, fold, dataset_json, device)
+        self.initial_lr = 1e-3
+
+
+
 class nnUNetTrainerMuon_750(nnUNetTrainerMuon):
     def __init__(self, plans: dict, configuration: str, fold: int, dataset_json: dict,
                  device: torch.device = torch.device('cuda')):
