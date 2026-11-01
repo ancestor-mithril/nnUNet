@@ -29,14 +29,17 @@ deep_sizes = [
     18,
     26,
 ]
+deep_and_wide_sizes = [
+    32
+]
 std_sizes = [
     8,
     12,
     16,
     24,
-    32
+
 ]
-model_sizes_range = list(sorted(deep_sizes + std_sizes))
+model_sizes_range = list(sorted(deep_sizes + deep_and_wide_sizes + std_sizes))
 
 
 def run_command(command, envs):
@@ -239,6 +242,10 @@ def update_network_config(path, enc=None, dec=None, features=None, config="3d_fu
 
 
 def preprocess(args):
+    # QUICK FIX:
+    model_size = args.model_size
+    if args.model_size == 32:
+        model_size = 24
     raw_path = os.getenv("cont_data_path")
     images_tr = os.path.join(raw_path, "imagesTr")
     original_labels = os.path.join(raw_path, "labels")
@@ -303,7 +310,7 @@ def preprocess(args):
         f"-pl {envs['nnUNet_plans']} "
         f"-np {args.num_workers} "
         f"-c {envs['nnUNet_conf']} "
-        f"-gpu_memory_target {args.model_size} "
+        f"-gpu_memory_target {model_size} "
     )
     succeeded = run_command(command, envs)
     if not succeeded:
@@ -316,6 +323,13 @@ def preprocess(args):
             os.path.join(preprocess_path, "nnUNetResEncUNetLPlans_torchres.json"),
             enc=[1, 3, 4, 8, 8, 8],
             dec=[2, 2, 1, 1, 1],
+        )
+    elif args.model_size in deep_and_wide_sizes:
+        print("Using deep_and_wide size")
+        update_network_config(os.path.join(preprocess_path, "nnUNetResEncUNetLPlans_torchres.json"),
+            enc=[1, 3, 4, 8, 8, 8],
+            dec=[2, 2, 2, 1, 1],
+            features=[48, 96, 128, 256, 320, 384]
         )
     command = (
         "nnUNetv2_train "
