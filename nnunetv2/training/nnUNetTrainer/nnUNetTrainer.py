@@ -1517,7 +1517,8 @@ class nnUNetTrainer(object):
             n = len(dataset_val.identifiers)
             for i, k in tqdm(list(enumerate(dataset_val.identifiers)), desc=f"Validation for {step_size}"):
                 self.print_to_log_file(f"predicting {i}/{n}: {k}")
-                data, seg_prev, properties = dataset_val.load_case(k)
+                data, _, seg_prev = dataset_val.load_case(k)
+                properties = dataset_val.get_properties(k)
 
                 # we do [:] to convert blosc2 to numpy
                 data = data[:]

@@ -278,6 +278,7 @@ class nnUNetPredictor(object):
         self.network = self.networks[0]
 
     def load_trt(self, path):
+        print(f"Loading trt from {path}")
         if not os.path.isfile(path):
             raise FileNotFoundError(f'File {path} does not exist')
         import torch_tensorrt
