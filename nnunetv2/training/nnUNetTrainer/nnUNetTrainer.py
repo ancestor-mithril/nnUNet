@@ -1,4 +1,5 @@
 import inspect
+import json
 import multiprocessing
 import os
 import shutil
@@ -49,6 +50,7 @@ except ImportError:
    from torch.cuda.amp import GradScaler  # torch < 2.3
    TORCH_HAS_OLD_GRADSCALER = True
 from torch.nn.parallel import DistributedDataParallel as DDP
+from tqdm import tqdm
 
 from nnunetv2.configuration import ANISO_THRESHOLD, default_num_processes
 from nnunetv2.evaluation.evaluate_predictions import compute_metrics_on_folder
@@ -77,6 +79,46 @@ from nnunetv2.utilities.helpers import empty_cache, dummy_context, set_default_i
 from nnunetv2.utilities.label_handling.label_handling import convert_labelmap_to_one_hot, determine_num_input_channels
 from nnunetv2.utilities.plans_handling.plans_handler import PlansManager, ConfigurationManager
 
+
+from nnunetv2.utilities.logging import perf_logger
+
+
+def assert_finite_tensor(name, x):
+    if isinstance(x, (list, tuple)):
+        for i, value in enumerate(x):
+            assert_finite_tensor(f"{name}[{i}]", value)
+        return
+
+    if not torch.isfinite(x).all():
+        finite = x[torch.isfinite(x)]
+
+        print(f"\nNON-FINITE: {name}")
+        print(f"shape: {tuple(x.shape)}")
+        print(f"dtype: {x.dtype}")
+        print(f"nan: {torch.isnan(x).sum().item()}")
+        print(f"+inf: {torch.isposinf(x).sum().item()}")
+        print(f"-inf: {torch.isneginf(x).sum().item()}")
+
+        if finite.numel():
+            print(f"finite min: {finite.min().item()}")
+            print(f"finite max: {finite.max().item()}")
+            print(f"finite mean: {finite.float().mean().item()}")
+
+        raise FloatingPointError(name)
+
+
+def assert_model_finite(model, where):
+    for name, parameter in model.named_parameters():
+        if not torch.isfinite(parameter).all():
+            raise FloatingPointError(
+                f"Non-finite parameter {name} {where}"
+            )
+
+    for name, buffer in model.named_buffers():
+        if torch.is_floating_point(buffer) and not torch.isfinite(buffer).all():
+            raise FloatingPointError(
+                f"Non-finite buffer {name} {where}"
+            )
 
 class nnUNetTrainer(object):
     def __init__(self, plans: dict, configuration: str, fold: int, dataset_json: dict,
@@ -175,8 +217,8 @@ class nnUNetTrainer(object):
         self.oversample_foreground_percent = 0.33
         self.probabilistic_oversampling = False
         self.num_iterations_per_epoch = 250
-        self.num_val_iterations_per_epoch = 50
-        self.num_epochs = 1000
+        self.num_val_iterations_per_epoch = int(os.getenv("num_val_iterations_per_epoch", "10"))
+        self.num_epochs = int(os.getenv("NUM_EPOCHS", "1000"))
         self.current_epoch = 0
         self.enable_deep_supervision = True
 
@@ -213,18 +255,13 @@ class nnUNetTrainer(object):
         # self.configure_rotation_dummyDA_mirroring_and_inital_patch_size and will be saved in checkpoints
 
         ### checkpoint saving stuff
-        self.save_every = 50
+        self.save_every = int(os.getenv("SAVE_EVERY", "50"))
         self.disable_checkpointing = False
 
         self.was_initialized = False
+        self.clip_value = int(os.getenv("CLIP_VALUE", "12"))
 
-        self.print_to_log_file("\n#######################################################################\n"
-                               "Please cite the following paper when using nnU-Net:\n"
-                               "Isensee, F., Jaeger, P. F., Kohl, S. A., Petersen, J., & Maier-Hein, K. H. (2021). "
-                               "nnU-Net: a self-configuring method for deep learning-based biomedical image segmentation. "
-                               "Nature methods, 18(2), 203-211.\n"
-                               "#######################################################################\n",
-                               also_print_to_console=True, add_timestamp=False)
+        self.context = autocast(self.device.type, enabled=True) if self.device.type == 'cuda' and os.getenv("AUTOGRAD", "1") == "1" else dummy_context()
 
         # used to detect if we have received a termination signal because the cluster job is running into timeout ->
         # triggers a graceful exit at the next epoch boundary. SIGUSR1 does not exist on Windows.
@@ -470,6 +507,10 @@ class nnUNetTrainer(object):
             self.oversample_foreground_percent = oversample_percent
 
     def _build_loss(self):
+        ce_kwargs = {}
+        n = int(os.getenv("NN_CLASS_WEIGHTS_LEN", "0"))
+        if n > 0:
+            ce_kwargs["weight"] = torch.tensor([float(os.getenv(f"NN_CLASS_WEIGHTS_{i}", "1")) for i in range(n)])
         if self.label_manager.has_regions:
             loss = DC_and_BCE_loss({},
                                    {'batch_dice': self.configuration_manager.batch_dice,
@@ -478,8 +519,10 @@ class nnUNetTrainer(object):
                                    dice_class=MemoryEfficientSoftDiceLoss)
         else:
             loss = DC_and_CE_loss({'batch_dice': self.configuration_manager.batch_dice,
-                                   'smooth': 1e-5, 'do_bg': False, 'ddp': self.is_ddp}, {}, weight_ce=1, weight_dice=1,
+                                   'smooth': 1e-5, 'do_bg': False, 'ddp': self.is_ddp}, ce_kwargs=ce_kwargs, weight_ce=1, weight_dice=1,
                                   ignore_label=self.label_manager.ignore_label, dice_class=MemoryEfficientSoftDiceLoss)
+
+        loss.ce = loss.ce.to(self.device)
 
         if self._do_i_compile():
             set_default_inductor_cache_dir()
@@ -658,6 +701,7 @@ class nnUNetTrainer(object):
             dataset = self.dataset_class(self.preprocessed_dataset_folder,
                                          identifiers=None,
                                          folder_with_segs_from_previous_stage=self.folder_with_segs_from_previous_stage)
+
             # In DDP only global rank 0 touches the split file, the other ranks receive the splits from it. They
             # would otherwise race rank 0 for creating the file, and on a shared filesystem a file that was just
             # created on one node is not necessarily visible on the others yet.
@@ -678,6 +722,8 @@ class nnUNetTrainer(object):
                     finally:
                         if isfile(tmp_file):
                             os.remove(tmp_file)
+                    if os.getenv("EXIT_AFTER_SPLIT", "0") == "1":
+                        exit(0)
                 else:
                     self.print_to_log_file("Using splits from existing split file:", splits_file)
                     splits = load_json(splits_file)
@@ -687,6 +733,8 @@ class nnUNetTrainer(object):
                 dist.broadcast_object_list(splits_container, src=0)
                 splits = splits_container[0]
 
+            if os.getenv("EXIT_AFTER_SPLIT", "0") == "1":
+                exit(0)
             self.print_to_log_file("Desired fold for training: %d" % self.fold)
             if self.fold < len(splits):
                 tr_keys = splits[self.fold]['train']
@@ -714,6 +762,8 @@ class nnUNetTrainer(object):
     def get_tr_and_val_datasets(self):
         # create dataset split
         tr_keys, val_keys = self.do_split()
+        if os.getenv("EXIT_AFTER_SPLIT", "0") == "1":
+            exit(0)
 
         # load the datasets for training and validation. Note that we always draw random samples so we really don't
         # care about distributing training cases across GPUs.
@@ -779,12 +829,17 @@ class nnUNetTrainer(object):
             mt_gen_train = SingleThreadedAugmenter(dl_tr, None)
             mt_gen_val = SingleThreadedAugmenter(dl_val, None)
         else:
+            val_proc = max(1, allowed_num_processes // 2)
+            if self.num_val_iterations_per_epoch == 1:
+                val_proc = 1
+            elif self.num_val_iterations_per_epoch == 10:
+                val_proc = min(val_proc, 4)
             mt_gen_train = NonDetMultiThreadedAugmenter(data_loader=dl_tr, transform=None,
                                                         num_processes=allowed_num_processes,
                                                         num_cached=max(6, allowed_num_processes // 2), seeds=None,
                                                         pin_memory=self.device.type == 'cuda', wait_time=0.002)
             mt_gen_val = NonDetMultiThreadedAugmenter(data_loader=dl_val,
-                                                      transform=None, num_processes=max(1, allowed_num_processes // 2),
+                                                      transform=None, num_processes=val_proc,
                                                       num_cached=max(3, allowed_num_processes // 4), seeds=None,
                                                       pin_memory=self.device.type == 'cuda',
                                                       wait_time=0.002)
@@ -1086,26 +1141,37 @@ class nnUNetTrainer(object):
         else:
             target = target.to(self.device, non_blocking=True)
 
+        # assert_model_finite(self.network, "pre-forward")
+
         self.optimizer.zero_grad(set_to_none=True)
         # Autocast can be annoying
         # If the device_type is 'cpu' then it's slow as heck and needs to be disabled.
         # If the device_type is 'mps' then it will complain that mps is not implemented, even if enabled=False is set. Whyyyyyyy. (this is why we don't make use of enabled=False)
         # So autocast will only be active if we have a cuda device.
-        with autocast(self.device.type, enabled=True) if self.device.type == 'cuda' else dummy_context():
+        with self.context:
             output = self.network(data)
             # del data
             l = self.loss(output, target)
 
+
+        # assert_finite_tensor("data", data)
+        # assert_finite_tensor("target", target)
+        # assert_finite_tensor("output", output)
+        # assert_finite_tensor("l", l)
+        # sleep(20 / 250)
+
         if self.grad_scaler is not None:
             self.grad_scaler.scale(l).backward()
+            # sleep(20 / 250)
             self.grad_scaler.unscale_(self.optimizer)
-            torch.nn.utils.clip_grad_norm_(self.network.parameters(), 12)
+            torch.nn.utils.clip_grad_norm_(self.network.parameters(), self.clip_value)
             self.grad_scaler.step(self.optimizer)
             self.grad_scaler.update()
         else:
             l.backward()
-            torch.nn.utils.clip_grad_norm_(self.network.parameters(), 12)
+            torch.nn.utils.clip_grad_norm_(self.network.parameters(), self.clip_value)
             self.optimizer.step()
+
         return {'loss': l.detach().cpu().numpy()}
 
     def on_train_epoch_end(self, train_outputs: List[dict]):
@@ -1141,6 +1207,8 @@ class nnUNetTrainer(object):
             output = self.network(data)
             del data
             l = self.loss(output, target)
+
+        # sleep(15 / 250)
 
         # we only need the output with the highest output resolution (if DS enabled)
         if self.enable_deep_supervision:
@@ -1350,7 +1418,58 @@ class nnUNetTrainer(object):
             if checkpoint.get('grad_scaler_state') is not None:
                 self.grad_scaler.load_state_dict(checkpoint['grad_scaler_state'])
 
-    def perform_actual_validation(self, save_probabilities: bool = False):
+    def save_trt(self):
+        compiled_path = os.path.join(self.output_folder, f"compiled_model_trt.ep")
+        if os.path.isfile(compiled_path):
+            return
+        if os.getenv("USE_TENSOR_RT", "0") == "0":
+            raise RuntimeError("USE_TENSOR_RT environment variable not set")
+
+        self.set_deep_supervision_enabled(False)
+        self.network.eval()
+        self.network = self.network.to(device=self.device, dtype=torch.float16)
+        import torch_tensorrt
+
+        os.environ["BATCHED_MIRROR"] = "0"
+
+        num_input_channels = self.num_input_channels
+        bs = 1
+        input_shape = (bs, num_input_channels, *self.configuration_manager.patch_size)
+        perf_logger.info(f"Using tensorrt. Compiling network with bs {bs}")
+        network = self.network
+        dtype = torch.float16
+        inputs = [
+            torch_tensorrt.Input(shape=input_shape, dtype=dtype)
+        ]
+        print("PyTorch:", torch.__version__)
+        print("Torch-TensorRT:", torch_tensorrt.__version__)
+
+        print("network type", type(network))
+        example_inputs = [
+            torch.randn(
+                input_shape,
+                dtype=dtype,
+                device=self.device,
+            )
+        ]
+        exported_program = torch.export.export(
+            network,
+            tuple(example_inputs),
+        )
+        perf_logger.info("Exported PyTorch")
+        torch_tensorrt.compile_and_save(
+            exported_program,
+            compiled_path,
+            arg_inputs=example_inputs,
+            enabled_precisions={dtype},
+            optimization_level=5,
+            require_full_compilation=True,
+            immutable_weights=True,
+        )
+        perf_logger.info("Saved compiled model")
+
+    @torch.inference_mode()
+    def perform_actual_validation(self, save_probabilities: bool = False, step_size: float = 0.5, validation_path: str = "validation"):
         self.set_deep_supervision_enabled(False)
         self.network.eval()
 
@@ -1364,17 +1483,135 @@ class nnUNetTrainer(object):
                                    "forward pass (where compile is triggered) already has deep supervision disabled. "
                                    "This is exactly what we need in perform_actual_validation")
 
-        predictor = nnUNetPredictor(tile_step_size=0.5, use_gaussian=True, use_mirroring=True,
-                                    perform_everything_on_device=True, device=self.device, verbose=False,
+        predictor = nnUNetPredictor(tile_step_size=step_size, use_gaussian=True, use_mirroring=True,
+                                    perform_everything_on_device=False, device=self.device, verbose=False,
                                     verbose_preprocessing=False, allow_tqdm=False)
-        predictor.manual_initialization(self.network, self.plans_manager, self.configuration_manager, None,
+        predictor.manual_initialization(self.network, self.plans_manager, self.configuration_manager,
                                         self.dataset_json, self.__class__.__name__,
-                                        self.inference_allowed_mirroring_axes)
+                                        self.inference_allowed_mirroring_axes, self.output_folder)
+
+        if os.getenv("sequential_validation", "1") == "1":
+            print(f"Validation written to {validation_path}")
+            validation_output_folder = join(self.output_folder, validation_path)
+            maybe_mkdir_p(validation_output_folder)
+
+            # we cannot use self.get_tr_and_val_datasets() here because we might be DDP and then we have to distribute
+            # the validation keys across the workers.
+            _, val_keys = self.do_split()
+            if self.is_ddp:
+                last_barrier_at_idx = len(val_keys) // dist.get_world_size() - 1
+
+                val_keys = val_keys[self.local_rank:: dist.get_world_size()]
+                # we cannot just have barriers all over the place because the number of keys each GPU receives can be
+                # different
+
+            dataset_val = self.dataset_class(self.preprocessed_dataset_folder, val_keys,
+                                             folder_with_segs_from_previous_stage=self.folder_with_segs_from_previous_stage)
+
+            next_stages = self.configuration_manager.next_stage_names
+
+            if next_stages is not None:
+                _ = [maybe_mkdir_p(join(self.output_folder_base, 'predicted_next_stage', n)) for n in next_stages]
+
+            results = []
+            n = len(dataset_val.identifiers)
+            for i, k in tqdm(list(enumerate(dataset_val.identifiers)), desc=f"Validation for {step_size}"):
+                self.print_to_log_file(f"predicting {i}/{n}: {k}")
+                data, _, seg_prev = dataset_val.load_case(k)
+                properties = dataset_val.get_properties(k)
+
+                # we do [:] to convert blosc2 to numpy
+                data = data[:]
+
+                if self.is_cascaded:
+                    seg_prev = seg_prev[:]
+                    data = np.vstack((data, convert_labelmap_to_one_hot(seg_prev, self.label_manager.foreground_labels,
+                                                                        output_dtype=data.dtype)))
+                with warnings.catch_warnings():
+                    # ignore 'The given NumPy array is not writable' warning
+                    warnings.simplefilter("ignore")
+                    data = torch.from_numpy(data)
+
+                self.print_to_log_file(f'{k}, shape {data.shape}, rank {self.local_rank}')
+                output_filename_truncated = join(validation_output_folder, k)
+
+                prediction = predictor.predict_sliding_window_return_logits(data)
+                prediction = prediction.cpu()
+
+                # this needs to go into background processes
+                results.append(
+                    export_prediction_from_logits(
+                        prediction, properties, self.configuration_manager, self.plans_manager,
+                             self.dataset_json, output_filename_truncated, save_probabilities
+                    )
+                )
+
+                # if needed, export the softmax prediction for the next stage
+                if next_stages is not None:
+                    for n in next_stages:
+                        next_stage_config_manager = self.plans_manager.get_configuration(n)
+                        expected_preprocessed_folder = join(nnUNet_preprocessed, self.plans_manager.dataset_name,
+                                                            next_stage_config_manager.data_identifier)
+                        # next stage may have a different dataset class, do not use self.dataset_class
+                        dataset_class = infer_dataset_class(expected_preprocessed_folder)
+
+                        try:
+                            # we do this so that we can use load_case and do not have to hard code how loading training cases is implemented
+                            tmp = dataset_class(expected_preprocessed_folder, [k])
+                            d, _, _ = tmp.load_case(k)
+                        except FileNotFoundError:
+                            self.print_to_log_file(
+                                f"Predicting next stage {n} failed for case {k} because the preprocessed file is missing! "
+                                f"Run the preprocessing for this configuration first!")
+                            continue
+
+                        target_shape = d.shape[1:]
+                        output_folder = join(self.output_folder_base, 'predicted_next_stage', n)
+                        output_file_truncated = join(output_folder, k)
+
+                        results.append(
+                            resample_and_save(
+                                prediction, target_shape, output_file_truncated, self.plans_manager,
+                                 self.configuration_manager,
+                                 properties,
+                                 self.dataset_json,
+                                 default_num_processes,
+                                 dataset_class
+                            )
+                        )
+                # if we don't barrier from time to time we will get nccl timeouts for large datasets. Yuck.
+                if self.is_ddp and i < last_barrier_at_idx and (i + 1) % 20 == 0:
+                    dist.barrier()
+
+            if self.is_ddp:
+                dist.barrier()
+
+            if self.local_rank == 0:
+                metrics = compute_metrics_on_folder(join(self.preprocessed_dataset_folder_base, 'gt_segmentations'),
+                                                    validation_output_folder,
+                                                    join(validation_output_folder, 'summary.json'),
+                                                    self.plans_manager.image_reader_writer_class(),
+                                                    self.dataset_json["file_ending"],
+                                                    self.label_manager.foreground_regions if self.label_manager.has_regions else
+                                                    self.label_manager.foreground_labels,
+                                                    self.label_manager.ignore_label, chill=True,
+                                                    num_processes=default_num_processes * dist.get_world_size() if
+                                                    self.is_ddp else default_num_processes)
+                for label in metrics["mean"]:
+                    self.logger.log_summary(f"final_val/class_{label}_dice", metrics["mean"][label]["Dice"])
+                self.logger.log_summary("final_val/foreground_dice", metrics['foreground_mean']["Dice"])
+                self.print_to_log_file("Validation complete", also_print_to_console=True)
+                self.print_to_log_file("Mean Validation Dice: ", (metrics['foreground_mean']["Dice"]),
+                                    also_print_to_console=True)
+
+            self.set_deep_supervision_enabled(True)
+            compute_gaussian.cache_clear()
+            return
 
         with self.network.no_sync() if self.is_ddp else dummy_context():
             with multiprocessing.get_context("spawn").Pool(default_num_processes) as segmentation_export_pool:
                 worker_list = [i for i in segmentation_export_pool._pool]
-                validation_output_folder = join(self.output_folder, 'validation')
+                validation_output_folder = join(self.output_folder, validation_path)
                 maybe_mkdir_p(validation_output_folder)
 
                 # we cannot use self.get_tr_and_val_datasets() here because we might be DDP and then we have to distribute
@@ -1513,6 +1750,7 @@ class nnUNetTrainer(object):
 
     def run_training(self):
         self.on_train_start()
+        print(f"Running for {self.num_epochs} epochs")
 
         for epoch in range(self.current_epoch, self.num_epochs):
             self.on_epoch_start()
@@ -1531,6 +1769,8 @@ class nnUNetTrainer(object):
                 self.on_validation_epoch_end(val_outputs)
 
             self.on_epoch_end()
+            if os.getenv("nnUNet_stop_first_epoch", "0") == "1":
+                break
 
         self.on_train_end()
 

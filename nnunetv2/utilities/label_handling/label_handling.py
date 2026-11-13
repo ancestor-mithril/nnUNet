@@ -1,4 +1,6 @@
 from __future__ import annotations
+
+import os
 from time import time
 from typing import Union, List, Tuple, Type
 
@@ -6,12 +8,15 @@ import numpy as np
 import torch
 from acvl_utils.cropping_and_padding.bounding_boxes import insert_crop_into_image
 from batchgenerators.utilities.file_and_folder_operations import join
+from tqdm import trange
 
 import nnunetv2
 from nnunetv2.utilities.find_class_by_name import recursive_find_python_class
 from nnunetv2.utilities.helpers import softmax_helper_dim0
 
 from typing import TYPE_CHECKING
+
+from nnunetv2.utilities.logging import perf_logger
 
 # see https://adamj.eu/tech/2021/05/13/python-type-hints-how-to-fix-circular-imports/
 if TYPE_CHECKING:
@@ -155,7 +160,6 @@ class LabelManager(object):
 
         with torch.no_grad():
             # softmax etc is not implemented for half
-            logits = logits.float()
             probabilities = self.inference_nonlin(logits)
 
         return probabilities
@@ -198,7 +202,6 @@ class LabelManager(object):
             segmentation = argmax_first_axis(predicted_probabilities)
             if not is_numpy:
                 segmentation = torch.from_numpy(segmentation)
-
         return segmentation
 
     @torch.inference_mode()

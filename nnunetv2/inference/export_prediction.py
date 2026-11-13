@@ -1,14 +1,68 @@
+import gc
+import os
 from typing import Union, List
 
 import numpy as np
 import torch
+from scipy.ndimage import binary_dilation, generate_binary_structure
 from acvl_utils.cropping_and_padding.bounding_boxes import insert_crop_into_image
 from batchgenerators.utilities.file_and_folder_operations import load_json, save_pickle
 
 from nnunetv2.configuration import default_num_processes
 from nnunetv2.training.dataloading.nnunet_dataset import nnUNetDatasetBlosc2, comp_blosc2_params
 from nnunetv2.utilities.label_handling.label_handling import LabelManager
+from nnunetv2.utilities.logging import perf_logger
 from nnunetv2.utilities.plans_handling.plans_handler import PlansManager, ConfigurationManager
+
+
+def dilate_tromb(predicted_logits, tromb_label, background_label=0):
+    is_tensor = isinstance(predicted_logits, torch.Tensor)
+
+    segmentation = predicted_logits.argmax(0)
+    if is_tensor:
+        segmentation = segmentation.cpu().numpy()
+    tromb_mask = segmentation == tromb_label
+
+    if not tromb_mask.any():
+        perf_logger.info("No tromb")
+        return predicted_logits
+
+    dilated_mask = binary_dilation(
+        tromb_mask,
+        structure=generate_binary_structure(segmentation.ndim, 1),
+        iterations=1,
+    )
+
+    to_add = dilated_mask & (segmentation == background_label)
+    if not to_add.any():
+        perf_logger.info("Tromb couldn't be dilated")
+        return predicted_logits
+
+    perf_logger.info(f"Pixels grown: {to_add.sum()}")
+    if is_tensor:
+        to_add = torch.as_tensor(to_add, device=predicted_logits.device)
+
+    predicted_logits[tromb_label, to_add] = predicted_logits[background_label, to_add] + 1.0
+    return predicted_logits
+
+
+def get_segmentation_and_probabilities(predicted_logits, label_manager: LabelManager, return_probabilities: bool):
+    if os.getenv("DILATE_TROMB", "0") == "1":
+        perf_logger.info("Dilating tromb")
+        if label_manager.has_regions:
+            raise ValueError("DILATE_TROMB requires mutually exclusive classes.")
+        tromb_label_value = os.getenv("DILATE_TROMB_LABEL")
+
+        predicted_logits = dilate_tromb(
+            predicted_logits, tromb_label=int(tromb_label_value)
+        )
+        perf_logger.info("Dilatation done")
+
+    if not return_probabilities:
+        # this has a faster computation path becasue we can skip the softmax in regular (not region based) trainig
+        return label_manager.convert_logits_to_segmentation(predicted_logits), None
+    predicted_probabilities = label_manager.apply_inference_nonlin(predicted_logits)
+    return label_manager.convert_probabilities_to_segmentation(predicted_probabilities), predicted_probabilities
 
 
 def convert_predicted_logits_to_segmentation_with_correct_shape(predicted_logits: Union[torch.Tensor, np.ndarray],
@@ -28,24 +82,49 @@ def convert_predicted_logits_to_segmentation_with_correct_shape(predicted_logits
         len(properties_dict['shape_after_cropping_and_before_resampling']) else \
         [spacing_transposed[0], *configuration_manager.spacing]
     current_spacing = [s if c is None else c for c, s in zip(current_spacing, spacing_transposed)]
-    predicted_logits = configuration_manager.resampling_fn_probabilities(predicted_logits,
-                                            properties_dict['shape_after_cropping_and_before_resampling'],
-                                            current_spacing,
-                                            [properties_dict['spacing'][i] for i in plans_manager.transpose_forward])
-    # return value of resampling_fn_probabilities can be ndarray or Tensor but that does not matter because
-    # apply_inference_nonlin will convert to torch
-    if not return_probabilities:
-        # this has a faster computation path because we can skip the softmax in regular (not region based) training
-        segmentation = label_manager.convert_logits_to_segmentation(predicted_logits)
-    else:
-        predicted_probabilities = label_manager.apply_inference_nonlin(predicted_logits)
-        segmentation = label_manager.convert_probabilities_to_segmentation(predicted_probabilities)
-    del predicted_logits
 
+    low_memory_resampling = os.getenv('nn_resampling_nn', '0') == "1"
+    perf_logger.info(f"Using low_memory_resampling: {low_memory_resampling}")
+    if not low_memory_resampling:
+        perf_logger.info(f"Resampling logits from {predicted_logits.shape} "
+                         f"to {properties_dict['shape_after_cropping_and_before_resampling']}")
+        predicted_logits = configuration_manager.resampling_fn_probabilities(predicted_logits,
+                                                                             properties_dict[
+                                                                                 'shape_after_cropping_and_before_resampling'],
+                                                                             current_spacing,
+                                                                             [properties_dict['spacing'][i] for i in
+                                                                              plans_manager.transpose_forward])
+        perf_logger.info(f"Converting logits {predicted_logits.shape} to segmentation")
+        segmentation, predicted_probabilities = get_segmentation_and_probabilities(
+            predicted_logits, label_manager, return_probabilities)
+        del predicted_logits
+        perf_logger.info("Got segmentation")
+    else:
+        device = torch.device(os.getenv('nn_resample_device', 'cpu'))
+        perf_logger.info(f"Resampling on {device}")
+        predicted_logits = predicted_logits.to(device=device)
+        perf_logger.info(f"get segmentation for {predicted_logits.shape}")
+        gc.collect()
+        segmentation, predicted_probabilities = get_segmentation_and_probabilities(
+            predicted_logits, label_manager, return_probabilities)
+        del predicted_logits
+        perf_logger.info(f"cast segmentation {segmentation.shape} from {segmentation.dtype} to bfloat16")
+        segmentation = segmentation[None, None].to(dtype=torch.bfloat16)
+        gc.collect()
+        perf_logger.info(f"Start interpolate for {segmentation.shape}")
+        segmentation = torch.nn.functional.interpolate(
+            segmentation,
+            properties_dict['shape_after_cropping_and_before_resampling'],
+            mode='nearest-exact',
+            antialias=False
+        )[0, 0].to(torch.int16).cpu()
+        perf_logger.info("End interpolate")
     # put segmentation in bbox (revert cropping)
     segmentation_reverted_cropping = np.zeros(properties_dict['shape_before_cropping'],
                                               dtype=np.uint8 if len(label_manager.foreground_labels) < 255 else np.uint16)
-    segmentation_reverted_cropping = insert_crop_into_image(segmentation_reverted_cropping, segmentation, properties_dict['bbox_used_for_cropping'])
+    segmentation_reverted_cropping = insert_crop_into_image(segmentation_reverted_cropping, segmentation,
+                                                            properties_dict['bbox_used_for_cropping'])
+    perf_logger.info("Reverted cropping")
     del segmentation
 
     # segmentation may be torch.Tensor but we continue with numpy
@@ -70,7 +149,6 @@ def convert_predicted_logits_to_segmentation_with_correct_shape(predicted_logits
     else:
         torch.set_num_threads(old_threads)
         return segmentation_reverted_cropping
-
 
 def export_prediction_from_logits(predicted_array_or_file: Union[np.ndarray, torch.Tensor], properties_dict: dict,
                                   configuration_manager: ConfigurationManager,

@@ -139,7 +139,7 @@ def _checkpoint_to_continue_from(output_folder: str) -> Optional[str]:
     return latest
 
 
-def maybe_load_checkpoint(nnunet_trainer: nnUNetTrainer, continue_training: bool, validation_only: bool,
+def maybe_load_checkpoint(nnunet_trainer: nnUNetTrainer, continue_training: bool, validation_only: bool, save_trt:bool,
                           pretrained_weights_file: str = None, validation_with_best: bool = False):
     if continue_training and pretrained_weights_file is not None:
         raise RuntimeError('Cannot both continue a training AND load pretrained weights. Pretrained weights can only '
@@ -150,15 +150,13 @@ def maybe_load_checkpoint(nnunet_trainer: nnUNetTrainer, continue_training: bool
         if expected_checkpoint_file is None:
             print("WARNING: Cannot continue training because there seems to be no checkpoint available to "
                   "continue from. Starting a new training...")
-    elif validation_only and validation_with_best:
-        # does not need checkpoint_final, so this also validates trainings that were stopped before they finished
-        expected_checkpoint_file = find_checkpoint_file(join(nnunet_trainer.output_folder,
-                                                             'checkpoint_best.safetensors'))
-        if expected_checkpoint_file is None:
-            raise RuntimeError("Cannot run validation with --val_best because there is no checkpoint_best!")
-    elif validation_only:
-        expected_checkpoint_file = find_checkpoint_file(join(nnunet_trainer.output_folder,
-                                                             'checkpoint_final.safetensors'))
+    elif validation_only or save_trt:
+        if validation_with_best:
+            expected_checkpoint_file = find_checkpoint_file(join(nnunet_trainer.output_folder,
+                                                                 'checkpoint_best.safetensors'))
+        else:
+            expected_checkpoint_file = find_checkpoint_file(join(nnunet_trainer.output_folder,
+                                                                 'checkpoint_final.safetensors'))
         if expected_checkpoint_file is None:
             raise RuntimeError("Cannot run validation because the training is not finished yet!")
     else:
@@ -179,6 +177,9 @@ class TrainingRunOptions:
     export_validation_probabilities: bool = False
     continue_training: bool = False
     only_run_validation: bool = False
+    save_trt: bool = False
+    step_size_for_val: float = 0.5
+    val_path: str = "validation"
     disable_checkpointing: bool = False
     val_with_best: bool = False
 
@@ -190,19 +191,31 @@ def execute_training(trainer_factory: Callable[[torch.device], nnUNetTrainer], d
     process group, if there is one, already exists and `device` is ours.
     """
     nnunet_trainer = trainer_factory(device)
+    if options.save_trt:
+        os.environ["nnUNet_compile"] = "0"
 
     if options.disable_checkpointing:
         nnunet_trainer.disable_checkpointing = options.disable_checkpointing
 
     assert not (options.continue_training and options.only_run_validation), \
         'Cannot set --c and --val flag at the same time. Dummy.'
+    assert not (options.continue_training and options.save_trt), \
+        'Cannot set --c and --save_trt flag at the same time. Dummy.'
+    assert not (options.only_run_validation and options.save_trt), \
+        'Cannot set --val and --save_trt flag at the same time. Dummy.'
 
-    maybe_load_checkpoint(nnunet_trainer, options.continue_training, options.only_run_validation,
-                          options.pretrained_weights, options.val_with_best)
+    if os.getenv("EXIT_AFTER_SPLIT", "0") == "0":
+        maybe_load_checkpoint(nnunet_trainer, options.continue_training, options.only_run_validation, options.save_trt,
+                              options.pretrained_weights, options.val_with_best)
 
     if torch.cuda.is_available():
         cudnn.deterministic = False
         cudnn.benchmark = True
+
+    if options.save_trt:
+        nnunet_trainer.save_trt()
+        print("Saved compiled model")
+        return
 
     if not options.only_run_validation:
         nnunet_trainer.run_training()
@@ -216,7 +229,11 @@ def execute_training(trainer_factory: Callable[[torch.device], nnUNetTrainer], d
         # which needs the name of the file that exists (checkpoint_best.pth for trainings from older nnU-Net versions)
         nnunet_trainer.load_checkpoint(resolve_checkpoint_file(join(nnunet_trainer.output_folder,
                                                                     'checkpoint_best.safetensors')))
-    nnunet_trainer.perform_actual_validation(options.export_validation_probabilities)
+    if os.getenv("DO_VALIDATION", "0") == "1":
+        nnunet_trainer.perform_actual_validation(
+            options.export_validation_probabilities, options.step_size_for_val, options.val_path)
+    else:
+        print("Validation not done. To run validation, set the environment: DO_VALIDATION=1")
 
 
 def run_intranode_ddp(rank: int, trainer_factory: Callable[[torch.device], nnUNetTrainer], world_size: int,
@@ -225,6 +242,8 @@ def run_intranode_ddp(rank: int, trainer_factory: Callable[[torch.device], nnUNe
     One worker of a `-num_gpus X` launch. mp.spawn pickles the arguments, so trainer_factory must be picklable:
     a functools.partial over a module level function is, a lambda or closure is not.
     """
+    if options.save_trt:
+        raise RuntimeError("Save trt not supported.")
     # Emulate torchrun environment variables for non-torchrun launches so that everything downstream only ever
     # has to read these four and never has to care how the job was started. Single node, so local == global.
     os.environ["RANK"] = str(rank)
@@ -258,6 +277,8 @@ def launch_training(trainer_factory: Callable[[torch.device], nnUNetTrainer], de
         assert not options.disable_checkpointing, '--val_best is not compatible with --disable_checkpointing'
 
     external_launcher = launched_by_external_launcher()
+    if external_launcher and options.save_trt:
+        raise RuntimeError("Save trt not supported.")
 
     if external_launcher or num_gpus == 1:
         if external_launcher:
@@ -307,6 +328,9 @@ def run_training(dataset_name_or_id: Union[str, int],
                  export_validation_probabilities: bool = False,
                  continue_training: bool = False,
                  only_run_validation: bool = False,
+                 save_trt: bool = False,
+                 step_size_for_val: float = 0.5,
+                 val_path: str = 'validation',
                  disable_checkpointing: bool = False,
                  val_with_best: bool = False,
                  device: torch.device = torch.device('cuda')):
@@ -330,6 +354,9 @@ def run_training(dataset_name_or_id: Union[str, int],
                                  export_validation_probabilities=export_validation_probabilities,
                                  continue_training=continue_training,
                                  only_run_validation=only_run_validation,
+                                 save_trt=save_trt,
+                                 step_size_for_val=step_size_for_val,
+                                 val_path=val_path,
                                  disable_checkpointing=disable_checkpointing,
                                  val_with_best=val_with_best)
     launch_training(trainer_factory, device, num_gpus, options)
@@ -362,6 +389,10 @@ def run_training_entry():
     parser.add_argument('--val', action='store_true', required=False,
                         help='[OPTIONAL] Set this flag to only run the validation. Requires training to have finished '
                              '(with --val_best only that a checkpoint_best exists).')
+    parser.add_argument('--save_trt', action='store_true', required=False,
+                        help='[OPTIONAL] Set this flag to save a compiled model. Requires training to have finished.')
+    parser.add_argument('-step_size_for_val', type=float, default=0.5, required=False)
+    parser.add_argument('-val_path', type=str, default="validation", required=False)
     parser.add_argument('--val_best', action='store_true', required=False,
                         help='[OPTIONAL] If set, the validation will be performed with the checkpoint_best instead '
                              'of checkpoint_final. NOT COMPATIBLE with --disable_checkpointing! '
@@ -390,8 +421,8 @@ def run_training_entry():
         device = torch.device('mps')
 
     run_training(args.dataset_name_or_id, args.configuration, args.fold, args.tr, args.p, args.pretrained_weights,
-                 args.num_gpus, args.npz, args.c, args.val, args.disable_checkpointing, args.val_best,
-                 device=device)
+                 args.num_gpus, args.npz, args.c, args.val,  args.save_trt, args.step_size_for_val, args.val_path,
+                 args.disable_checkpointing, args.val_best, device=device)
 
 
 if __name__ == '__main__':

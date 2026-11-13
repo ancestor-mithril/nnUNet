@@ -1,10 +1,13 @@
+import gc
 import inspect
 import itertools
 import warnings
 import weakref
 import multiprocessing
 import os
+import tempfile
 from copy import deepcopy
+from pathlib import Path
 from queue import Queue
 from threading import Thread
 from time import sleep
@@ -16,6 +19,7 @@ from acvl_utils.cropping_and_padding.padding import pad_nd_image
 from batchgenerators.dataloading.multi_threaded_augmenter import MultiThreadedAugmenter
 from batchgenerators.utilities.file_and_folder_operations import load_json, join, isfile, maybe_mkdir_p, isdir, subdirs, \
     save_json
+from timed_decorator.simple_timed import timed
 from torch import nn
 from torch.nn.parallel import DistributedDataParallel
 from tqdm import tqdm
@@ -34,10 +38,54 @@ from nnunetv2.utilities.find_objects import recursive_find_trainer_class_by_name
 from nnunetv2.utilities.helpers import empty_cache, dummy_context, is_optimized_module, \
     set_default_inductor_cache_dir
 from nnunetv2.utilities.json_export import recursive_fix_for_json_export
+from nnunetv2.utilities.logging import perf_logger
 from nnunetv2.utilities.label_handling.label_handling import determine_num_input_channels, \
     convert_labelmap_to_one_hot
 from nnunetv2.utilities.plans_handling.plans_handler import PlansManager, ConfigurationManager
 from nnunetv2.utilities.utils import create_lists_from_splitted_dataset_folder
+import time
+import inspect
+
+
+timer_data = dict()
+
+
+def is_file_writable(file_path: str | Path) -> bool:
+    path = Path(file_path)
+    existed = path.exists()
+    try:
+        with open(path, "a"):
+            pass
+        if not existed:
+            path.unlink()  # Clean up if the file didn't exist before
+        return True
+    except (OSError, PermissionError):
+        return False
+
+def is_finite(x):
+    return torch.all(torch.isfinite(x))
+
+class Timer:
+    def __init__(self, name):
+        self.verbose = False
+        self.name = name
+
+    def __enter__(self):
+        frame = inspect.currentframe().f_back
+        self.filename = os.path.basename(frame.f_code.co_filename)
+        self.lineno = frame.f_lineno
+        self.start = time.time()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        elapsed = time.time() - self.start
+        key = f"{self.name} ({self.filename}:{self.lineno})"
+        if self.verbose:
+            print(f"{key} took {elapsed:.6f}s")
+        global timer_data
+        if key not in timer_data:
+            timer_data[key] = 0
+        timer_data[key] += elapsed
 
 
 class nnUNetPredictor(object):
@@ -50,12 +98,17 @@ class nnUNetPredictor(object):
                  verbose: bool = False,
                  verbose_preprocessing: bool = False,
                  allow_tqdm: bool = True):
+        os.environ["BATCHED_MIRROR"] = "0"
+        self.is_finite = is_finite
+        self.keep_model_on_cpu = False
+        self.networks = []
+        self.use_tensor_rt = False
         self.verbose = verbose
         self.verbose_preprocessing = verbose_preprocessing
         self.allow_tqdm = allow_tqdm
 
-        self.plans_manager, self.configuration_manager, self.list_of_parameters, self.network, self.dataset_json, \
-        self.trainer_name, self.allowed_mirroring_axes, self.label_manager = None, None, None, None, None, None, None, None
+        self.plans_manager, self.configuration_manager, self.network, self.dataset_json, \
+        self.trainer_name, self.allowed_mirroring_axes, self.label_manager = None, None, None, None, None, None, None
         # (network module, state dict) last loaded by _load_parameters, see there
         self._loaded_parameters = None
 
@@ -70,6 +123,8 @@ class nnUNetPredictor(object):
             perform_everything_on_device = False
         self.device = device
         self.perform_everything_on_device = perform_everything_on_device
+        self.axes_combinations = []
+        self.use_half = False
 
     def initialize_from_trained_model_folder(self, model_training_output_dir: str,
                                              use_folds: Union[Tuple[Union[int, str]], None],
@@ -87,22 +142,40 @@ class nnUNetPredictor(object):
         plans = load_json(join(model_training_output_dir, 'plans.json'))
         plans_manager = PlansManager(plans)
 
+        if os.getenv("USE_HALF", "0") == "1":
+            self.use_half = True
+        if os.getenv("USE_TENSOR_RT", "0") == "1":
+            self.use_tensor_rt = True
+            self.use_half = True
+
         if isinstance(use_folds, str):
             use_folds = [use_folds]
 
         parameters = []
+        compiled_paths = []
         for i, f in enumerate(use_folds):
             f = int(f) if f != 'all' else f
-            checkpoint = load_checkpoint_file(
-                join(model_training_output_dir, f'fold_{f}', checkpoint_name), map_location=torch.device('cpu'),
-                keys=('network_weights', 'trainer_name', 'init_args', 'inference_allowed_mirroring_axes'))
+            model_path = join(model_training_output_dir, f'fold_{f}')
+            compiled_path = None
+            if self.use_tensor_rt:
+                compiled_path = os.path.join(model_path, f"compiled_model_trt.ep")
+                compiled_paths.append(compiled_path)
+                if not os.path.isfile(compiled_path):
+                    compiled_path = None
+
+            if compiled_path is None or i == 0:
+                checkpoint = load_checkpoint_file(
+                    join(model_path, checkpoint_name), map_location=torch.device('cpu'),
+                    keys=('network_weights', 'trainer_name', 'init_args', 'inference_allowed_mirroring_axes'))
             if i == 0:
                 trainer_name = checkpoint['trainer_name']
                 configuration_name = checkpoint['init_args']['configuration']
                 inference_allowed_mirroring_axes = checkpoint['inference_allowed_mirroring_axes'] if \
                     'inference_allowed_mirroring_axes' in checkpoint.keys() else None
-
-            parameters.append(checkpoint['network_weights'])
+            if compiled_path is None:
+                parameters.append(checkpoint['network_weights'])
+            else:
+                parameters.append(compiled_path)
 
         configuration_manager = plans_manager.get_configuration(configuration_name)
         # restore network
@@ -135,11 +208,10 @@ class nnUNetPredictor(object):
 
         self.plans_manager = plans_manager
         self.configuration_manager = configuration_manager
-        self.list_of_parameters = parameters
 
-        # initialize network with first set of parameters, also see https://github.com/MIC-DKFZ/nnUNet/issues/2520
-        network.load_state_dict(parameters[0])
-
+        if not isinstance(parameters[0], str):
+            # initialize network with first set of parameters, also see https://github.com/MIC-DKFZ/nnUNet/issues/2520
+            network.load_state_dict(parameters[0])
         self.network = network
         self._loaded_parameters = (weakref.ref(network), parameters[0])
 
@@ -147,22 +219,81 @@ class nnUNetPredictor(object):
         self.trainer_name = trainer_name
         self.allowed_mirroring_axes = inference_allowed_mirroring_axes
         self.label_manager = plans_manager.get_label_manager(dataset_json)
-        if ('nnUNet_compile' in os.environ.keys()) and (os.environ['nnUNet_compile'].lower() in ('true', '1', 't')) \
-                and not is_optimized_module(self.network):
-            print('Using torch.compile')
-            set_default_inductor_cache_dir()
-            self.network = torch.compile(self.network)
+
+        use_compile = not self.use_tensor_rt and ('nnUNet_compile' in os.environ.keys()) and (os.environ['nnUNet_compile'].lower() in ('true', '1', 't')) and not is_optimized_module(self.network)
+
+        self.networks = []
+        self.keep_model_on_cpu = len(parameters) > 1 and not self.use_tensor_rt
+        for i in range(len(parameters)):
+            params = parameters[i]
+            if isinstance(params, str):
+                network = self.load_trt(params)
+                network.eval()
+                network = network.to(device=self.device, dtype=torch.float16)
+            else:
+                network = deepcopy(self.network)
+                network.load_state_dict(params)
+                network.eval()
+                if self.use_tensor_rt or self.use_half:
+                    network = network.to(device=self.device, dtype=torch.float16)
+                else:
+                    network = network.to(self.device)
+
+                if self.use_tensor_rt:
+                    import torch_tensorrt
+                    bs = (1 + len(self._get_mirror_axes(dim=1))) if os.getenv("BATCHED_MIRROR", "0") == "1" else 1
+                    input_shape = (bs, num_input_channels, *self.configuration_manager.patch_size)
+                    perf_logger.info(f"Using tensorrt. Compiling network with bs {bs}")
+                    inputs = [
+                        torch_tensorrt.Input(shape=input_shape, dtype=torch.float16)
+                    ]
+                    network = torch_tensorrt.compile(
+                        network,
+                        inputs,
+                        enabled_precisions={torch.float16},
+                        optimization_level=5,
+                        require_full_compilation=True,
+                        immutable_weights=True,
+                        ir="dynamo",
+                    )
+                    perf_logger.info("Compile done")
+                    compiled_path = compiled_paths[i]
+                    if is_file_writable(compiled_path):
+                        torch_tensorrt.save(
+                            network,
+                            compiled_path,
+                            arg_inputs=inputs,
+                        )
+                        perf_logger.info("Saved compiled model")
+                    else:
+                        perf_logger.warning(f"Could not save compiled model to {compiled_path}")
+                elif use_compile:
+                    network = torch.compile(network)
+                    set_default_inductor_cache_dir()
+                    print('Using torch.compile')
+            if self.keep_model_on_cpu:
+                network = network.cpu()
+            self.networks.append(network)
+        del self.network
+        self.network = self.networks[0]
+
+    def load_trt(self, path):
+        print(f"Loading trt from {path}")
+        if not os.path.isfile(path):
+            raise FileNotFoundError(f'File {path} does not exist')
+        import torch_tensorrt
+        return torch_tensorrt.load(path).module()
 
     def manual_initialization(self, network: nn.Module, plans_manager: PlansManager,
-                              configuration_manager: ConfigurationManager, parameters: Optional[List[dict]],
+                              configuration_manager: ConfigurationManager,
                               dataset_json: dict, trainer_name: str,
-                              inference_allowed_mirroring_axes: Optional[Tuple[int, ...]]):
+                              inference_allowed_mirroring_axes: Optional[Tuple[int, ...]],
+                              output_folder: str) -> None:
         """
         This is used by the nnUNetTrainer to initialize nnUNetPredictor for the final validation
         """
         self.plans_manager = plans_manager
         self.configuration_manager = configuration_manager
-        self.list_of_parameters = parameters
         self.network = network
         # we don't know what network holds, so the first prediction loads parameters[0]
         self._loaded_parameters = None
@@ -176,7 +307,20 @@ class nnUNetPredictor(object):
         allow_compile = allow_compile and not is_optimized_module(self.network)
         if isinstance(self.network, DistributedDataParallel):
             allow_compile = allow_compile and is_optimized_module(self.network.module)
-        if allow_compile:
+
+        self.network.eval()
+        if os.getenv("USE_HALF", "0") == "1":
+            self.use_half = True
+        if os.getenv("USE_TENSOR_RT", "0") == "1":
+            self.use_tensor_rt = True
+            self.use_half = True
+
+        if self.use_half:
+            self.network = self.network.to(device=self.device, dtype=torch.float16)
+
+        if self.use_tensor_rt:
+            self.network = self.load_trt(os.path.join(output_folder, f"compiled_model_trt.ep"))
+        elif allow_compile:
             print('Using torch.compile')
             set_default_inductor_cache_dir()
             self.network = torch.compile(self.network)
@@ -535,26 +679,31 @@ class nnUNetPredictor(object):
         SEE convert_predicted_logits_to_segmentation_with_correct_shape
         """
         n_threads = torch.get_num_threads()
+        perf_logger.info(f"Number of threads: {n_threads} / {default_num_processes}")
         torch.set_num_threads(default_num_processes if default_num_processes < n_threads else n_threads)
         prediction = None
+        if self.use_half:
+            data = data.half()
 
-        for params in self.list_of_parameters:
-            self._load_parameters(params)
+        for i in range(len(self.networks)):
+            self.network = self.networks[i]
+            if self.keep_model_on_cpu:
+                self.network = self.network.to(self.device)
 
-            # why not leave prediction on device if perform_everything_on_device? Because this may cause the
-            # second iteration to crash due to OOM. Grabbing that with try except cause way more bloated code than
-            # this actually saves computation time
+            current_prediction = self.predict_sliding_window_return_logits(data).cpu()
             if prediction is None:
-                prediction = self.predict_sliding_window_return_logits(data).to('cpu')
+                prediction = current_prediction
             else:
-                prediction += self.predict_sliding_window_return_logits(data).to('cpu')
+                prediction += current_prediction
 
-        if len(self.list_of_parameters) > 1:
-            prediction /= len(self.list_of_parameters)
+            if self.keep_model_on_cpu:
+                self.network = self.network.cpu()
 
-        if self.verbose:
-            print('Prediction done')
+        if len(self.networks) > 1:
+            prediction /= len(self.networks)
+
         torch.set_num_threads(n_threads)
+        del data
         return prediction
 
     def _internal_get_sliding_window_slicers(self, image_size: Tuple[int, ...]):
@@ -593,117 +742,117 @@ class nnUNetPredictor(object):
                                                   zip((sx, sy, sz), self.configuration_manager.patch_size)]]))
         return slicers
 
-    @torch.inference_mode()
+    def _batched_maybe_mirror_and_predict(self, x: torch.Tensor) -> torch.Tensor:
+        axes_combinations = self._get_mirror_axes(dim=1)
+
+        with Timer("prepare flips"):
+            batch = [x] + [torch.flip(x, axes) for axes in axes_combinations]
+            batch = torch.stack(batch).to(self.device, non_blocking=True)
+
+        with Timer("batch forward"):
+            rez = self.network(batch)
+
+        with Timer("back flips"):
+            prediction = rez[0]
+            for pred, axes in zip(rez[1:], axes_combinations):
+                prediction += torch.flip(pred, axes)
+            prediction /= len(axes_combinations) + 1
+        return prediction
+
+
     def _internal_maybe_mirror_and_predict(self, x: torch.Tensor) -> torch.Tensor:
-        mirror_axes = self.allowed_mirroring_axes if self.use_mirroring else None
-        prediction = self.network(x)
+        x = x.unsqueeze(0).to(self.device, non_blocking=True)
+        with Timer("forward"):
+            prediction = self.network(x)
 
-        if mirror_axes is not None:
-            # check for invalid numbers in mirror_axes
-            # x should be 5d for 3d images and 4d for 2d. so the max value of mirror_axes cannot exceed len(x.shape) - 3
-            assert max(mirror_axes) <= x.ndim - 3, 'mirror_axes does not match the dimension of the input!'
-
-            mirror_axes = [m + 2 for m in mirror_axes]
-            axes_combinations = [
-                c for i in range(len(mirror_axes)) for c in itertools.combinations(mirror_axes, i + 1)
-            ]
+        axes_combinations = self._get_mirror_axes(dim=2)
+        with Timer("flip forward"):
             for axes in axes_combinations:
                 prediction += torch.flip(self.network(torch.flip(x, axes)), axes)
             prediction /= (len(axes_combinations) + 1)
-        return prediction
+        return prediction[0]
 
-    @torch.inference_mode()
+
+    def _get_mirror_axes(self, dim):
+        mirror_axes = self.allowed_mirroring_axes if self.use_mirroring else None
+        if mirror_axes is not None and len(self.axes_combinations) == 0:
+            mirror_axes = [m + dim for m in mirror_axes]
+            self.axes_combinations = [
+                c for i in range(len(mirror_axes)) for c in itertools.combinations(mirror_axes, i + 1)
+            ]
+
+        return self.axes_combinations
+
+
     def _internal_predict_sliding_window_return_logits(self,
                                                        data: torch.Tensor,
                                                        slicers,
                                                        do_on_device: bool = True,
                                                        ):
-        predicted_logits = n_predictions = prediction = gaussian = workon = None
         results_device = self.device if do_on_device else torch.device('cpu')
+        pred_fn = self._batched_maybe_mirror_and_predict if os.getenv("BATCHED_MIRROR", "0") == "1" else self._internal_maybe_mirror_and_predict
+        print("Using BATCHED_MIRROR", os.getenv("BATCHED_MIRROR", "0"))
+        predicted_logits = torch.zeros((self.label_manager.num_segmentation_heads, *data.shape[1:]),
+                                       dtype=torch.half,
+                                       device=results_device)
+        n_predictions = torch.zeros(data.shape[1:], dtype=torch.half, device=results_device)
 
-        def producer(d, slh, q):
-            for s in slh:
-                q.put((torch.clone(d[s][None], memory_format=torch.contiguous_format).to(self.device), s))
-            q.put('end')
+        if self.use_gaussian:
+            value_scaling_factor = int(os.getenv("value_scaling_factor", "10"))
+            if self.tile_step_size <= 0.3:
+                if value_scaling_factor == 10:
+                    value_scaling_factor = 2
+                else:
+                    perf_logger.info(f"Dividing value_scaling_factor {value_scaling_factor} by 5")
+                    value_scaling_factor /= 5
+            perf_logger.info(f"Using value_scaling_factor {value_scaling_factor}")
+            gaussian = compute_gaussian(tuple(self.configuration_manager.patch_size), sigma_scale=1. / 8,
+                                        value_scaling_factor=value_scaling_factor,
+                                        device=results_device)
+        else:
+            gaussian = 1
 
-        try:
-            empty_cache(self.device)
+        step = 0
+        n = len(slicers)
+        perf_logger.info(f'running prediction: {n} steps')
 
-            # move data to device
-            if self.verbose:
-                print(f'move image to device {results_device}')
-            data = data.to(results_device)
-            queue = Queue(maxsize=2)
-            t = Thread(target=producer, args=(data, slicers, queue), daemon=True)
-            t.start()
+        for sl in tqdm(slicers, disable=not self.allow_tqdm):
+            if not self.allow_tqdm:
+                step += 1
+                if step % 10 == 0:
+                    perf_logger.info(f"Step {step}/{n}")
 
-            # preallocate arrays
-            if self.verbose:
-                print(f'preallocating results arrays on device {results_device}')
-            predicted_logits = torch.zeros((self.label_manager.num_segmentation_heads, *data.shape[1:]),
-                                           dtype=torch.half,
-                                           device=results_device)
-            n_predictions = torch.zeros(data.shape[1:], dtype=torch.half, device=results_device)
+            with Timer("predict"):
+                # _batched_maybe_mirror_and_predict is slower :(
+                prediction = pred_fn(data[sl]).to(results_device)
 
-            if self.use_gaussian:
-                gaussian = compute_gaussian(tuple(self.configuration_manager.patch_size), sigma_scale=1. / 8,
-                                            value_scaling_factor=10,
-                                            device=results_device)
-            else:
-                gaussian = 1
+            with Timer("updating pred"):
+                prediction *= gaussian
+                predicted_logits[sl] += prediction
+                n_predictions[sl[1:]] += gaussian
 
-            if not self.allow_tqdm and self.verbose:
-                print(f'running prediction: {len(slicers)} steps')
+        predicted_logits /= n_predictions
+        # check for infs
+        check_for_inf = os.getenv("IGNORE_INF", "0") == "0"
+        perf_logger.info(f"Checking for inf in {predicted_logits.shape}: {check_for_inf}")
+        if check_for_inf and not is_finite(predicted_logits):
+            raise RuntimeError(f'Encountered inf in predicted array: '
+                               f'isnan: {torch.isnan(predicted_logits)}, isinf: {torch.isinf(predicted_logits)}. '
+                               f'Aborting... If this problem persists, '
+                               'reduce value_scaling_factor in compute_gaussian or increase the dtype of '
+                               'predicted_logits to fp32')
+        return predicted_logits
 
-            with tqdm(desc=None, total=len(slicers), disable=not self.allow_tqdm) as pbar:
-                while True:
-                    item = queue.get()
-                    if item == 'end':
-                        queue.task_done()
-                        break
-                    workon, sl = item
-                    prediction = self._internal_maybe_mirror_and_predict(workon)[0].to(results_device)
 
-                    if self.use_gaussian:
-                        prediction *= gaussian
-                    predicted_logits[sl] += prediction
-                    n_predictions[sl[1:]] += gaussian
-                    queue.task_done()
-                    pbar.update()
-            queue.join()
-
-            # predicted_logits /= n_predictions
-            torch.div(predicted_logits, n_predictions, out=predicted_logits)
-            # check for infs
-            if torch.any(torch.isinf(predicted_logits)):
-                raise RuntimeError('Encountered inf in predicted array. Aborting... If this problem persists, '
-                                   'reduce value_scaling_factor in compute_gaussian or increase the dtype of '
-                                   'predicted_logits to fp32')
-            return predicted_logits
-        except Exception as e:
-            del predicted_logits, n_predictions, prediction, gaussian, workon
-            empty_cache(self.device)
-            empty_cache(results_device)
-            raise e
-
-    @torch.inference_mode()
-    def predict_sliding_window_return_logits(self, input_image: torch.Tensor) \
+    def predict_sliding_window_return_logits(self, input_image: torch.Tensor, external: bool = True) \
             -> Union[np.ndarray, torch.Tensor]:
-        assert isinstance(input_image, torch.Tensor)
-        self.network = self.network.to(self.device)
-        self.network.eval()
+        if external and self.use_half:
+            input_image = input_image.half()
 
-        empty_cache(self.device)
+        use_autocast = self.device.type == 'cuda' and not self.use_half
 
-        # Autocast can be annoying
-        # If the device_type is 'cpu' then it's slow as heck on some CPUs (no auto bfloat16 support detection)
-        # and needs to be disabled.
-        # If the device_type is 'mps' then it will complain that mps is not implemented, even if enabled=False
-        # is set. Whyyyyyyy. (this is why we don't make use of enabled=False)
-        # So autocast will only be active if we have a cuda device.
-        with torch.autocast(self.device.type, enabled=True) if self.device.type == 'cuda' else dummy_context():
-            assert input_image.ndim == 4, 'input_image must be a 4D np.ndarray or torch.Tensor (c, x, y, z)'
-
+        with torch.autocast(self.device.type) if use_autocast else dummy_context():
+            perf_logger.info(f"Input shape: {input_image.shape} ({input_image.dtype}), step_size: {self.tile_step_size}")
             if self.verbose:
                 print(f'Input shape: {input_image.shape}')
                 print("step_size:", self.tile_step_size)
@@ -719,18 +868,15 @@ class nnUNetPredictor(object):
             if self.perform_everything_on_device and self.device != 'cpu':
                 # we need to try except here because we can run OOM in which case we need to fall back to CPU as a results device
                 try:
-                    predicted_logits = self._internal_predict_sliding_window_return_logits(data, slicers,
-                                                                                           self.perform_everything_on_device)
+                    predicted_logits = self._internal_predict_sliding_window_return_logits(data, slicers, self.perform_everything_on_device)
                 except RuntimeError:
                     print(
                         'Prediction on device was unsuccessful, probably due to a lack of memory. Moving results arrays to CPU')
                     empty_cache(self.device)
                     predicted_logits = self._internal_predict_sliding_window_return_logits(data, slicers, False)
             else:
-                predicted_logits = self._internal_predict_sliding_window_return_logits(data, slicers,
-                                                                                       self.perform_everything_on_device)
-
-            empty_cache(self.device)
+                predicted_logits = self._internal_predict_sliding_window_return_logits(data, slicers, self.perform_everything_on_device)
+            del data
             # revert padding
             predicted_logits = predicted_logits[(slice(None), *slicer_revert_padding[1:])]
         return predicted_logits
@@ -794,8 +940,12 @@ class nnUNetPredictor(object):
             seg_from_prev_stage_files = [None] * len(list_of_lists_or_source_folder)
 
         ret = []
-        for li, of, sps in zip(list_of_lists_or_source_folder, output_filename_truncated, seg_from_prev_stage_files):
-            data, seg, data_properties = preprocessor.run_case(
+        all_files = list(zip(list_of_lists_or_source_folder, output_filename_truncated, seg_from_prev_stage_files))
+        if len(all_files) > 1:
+            self.is_finite = torch.compile(self.is_finite)
+        for li, of, sps in tqdm(all_files, desc="Inference bar"):
+            print("Case", li[0].split("/")[-1])
+            data, _, data_properties = preprocessor.run_case(
                 li,
                 sps,
                 self.plans_manager,
@@ -810,6 +960,7 @@ class nnUNetPredictor(object):
             print(f'perform_everything_on_device: {self.perform_everything_on_device}')
 
             prediction = self.predict_logits_from_preprocessed_data(torch.from_numpy(data)).cpu()
+            del data
 
             if of is not None:
                 export_prediction_from_logits(prediction, data_properties, self.configuration_manager, self.plans_manager,
@@ -819,6 +970,13 @@ class nnUNetPredictor(object):
                      self.configuration_manager, self.label_manager,
                      data_properties,
                      save_probabilities))
+
+            for key, value in list(timer_data.items()):
+                del timer_data[key]
+                perf_logger.info(f"{key}, {value}")
+
+        # clear lru cache
+        compute_gaussian.cache_clear()
 
         # clear device cache
         empty_cache(self.device)
@@ -885,13 +1043,6 @@ def predict_entry_point_modelfolder():
                         help="Set this flag to disable perform_everything_on_device. Recommended for large cases that "
                              "occupy more VRAM than available")
 
-    print(
-        "\n#######################################################################\nPlease cite the following paper "
-        "when using nnU-Net:\n"
-        "Isensee, F., Jaeger, P. F., Kohl, S. A., Petersen, J., & Maier-Hein, K. H. (2021). "
-        "nnU-Net: a self-configuring method for deep learning-based biomedical image segmentation. "
-        "Nature methods, 18(2), 203-211.\n#######################################################################\n")
-
     args = parser.parse_args()
     args.f = [i if i == 'all' else int(i) for i in args.f]
 
@@ -907,8 +1058,8 @@ def predict_entry_point_modelfolder():
         device = torch.device('cpu')
     elif args.device == 'cuda':
         # multithreading in torch doesn't help nnU-Net if run on GPU
-        torch.set_num_threads(1)
-        torch.set_num_interop_threads(1)
+        # torch.set_num_threads(1)
+        # torch.set_num_interop_threads(1)
         device = torch.device('cuda')
     else:
         device = torch.device('mps')
@@ -999,12 +1150,6 @@ def predict_entry_point():
                         help="Set this flag to disable perform_everything_on_device. Recommended for large cases that "
                              "occupy more VRAM than available")
 
-    print(
-        "\n#######################################################################\nPlease cite the following paper "
-        "when using nnU-Net:\n"
-        "Isensee, F., Jaeger, P. F., Kohl, S. A., Petersen, J., & Maier-Hein, K. H. (2021). "
-        "nnU-Net: a self-configuring method for deep learning-based biomedical image segmentation. "
-        "Nature methods, 18(2), 203-211.\n#######################################################################\n")
 
     args = parser.parse_args()
     args.f = [i if i == 'all' else int(i) for i in args.f]
@@ -1025,9 +1170,9 @@ def predict_entry_point():
         torch.set_num_threads(multiprocessing.cpu_count())
         device = torch.device('cpu')
     elif args.device == 'cuda':
-        # multithreading in torch doesn't help nnU-Net if run on GPU
-        torch.set_num_threads(1)
-        torch.set_num_interop_threads(1)
+        # # multithreading in torch doesn't help nnU-Net if run on GPU
+        # torch.set_num_threads(1)
+        # torch.set_num_interop_threads(1)
         device = torch.device('cuda')
     else:
         device = torch.device('mps')
