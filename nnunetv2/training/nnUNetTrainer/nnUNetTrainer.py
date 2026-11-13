@@ -1738,6 +1738,7 @@ class nnUNetTrainer(object):
 
     def run_training(self):
         self.on_train_start()
+        print(f"Running for {self.num_epochs} epochs")
 
         for epoch in range(self.current_epoch, self.num_epochs):
             self.on_epoch_start()
