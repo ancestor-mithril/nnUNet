@@ -69,6 +69,9 @@ from nnunetv2.utilities.label_handling.label_handling import convert_labelmap_to
 from nnunetv2.utilities.plans_handling.plans_handler import PlansManager
 
 
+from nnunetv2.utilities.logging import perf_logger
+
+
 def assert_finite_tensor(name, x):
     if isinstance(x, (list, tuple)):
         for i, value in enumerate(x):
@@ -1296,6 +1299,45 @@ class nnUNetTrainer(object):
             if checkpoint['grad_scaler_state'] is not None:
                 self.grad_scaler.load_state_dict(checkpoint['grad_scaler_state'])
 
+    def save_trt(self):
+        compiled_path = os.path.join(self.output_folder, f"compiled_model_trt.ep")
+        if os.path.isfile(compiled_path):
+            return
+        if os.getenv("USE_TENSOR_RT", "0") == "0":
+            raise RuntimeError("USE_TENSOR_RT environment variable not set")
+
+        self.set_deep_supervision_enabled(False)
+        self.network.eval()
+        import torch_tensorrt
+
+        os.setenv["BATCHED_MIRROR"] = "0"
+
+        num_input_channels = self.num_input_channels
+        bs = 1
+        input_shape = (bs, num_input_channels, *self.configuration_manager.patch_size)
+        perf_logger.info(f"Using tensorrt. Compiling network with bs {bs}")
+        network = self.network
+        dtype = torch.float16
+        inputs = [
+            torch_tensorrt.Input(shape=input_shape, dtype=dtype)
+        ]
+        network = torch_tensorrt.compile(
+            network,
+            inputs=inputs,
+            enabled_precisions={dtype},
+            optimization_level=5,
+            require_full_compilation=True,
+            immutable_weights=True,
+            ir="dynamo",
+        )
+        perf_logger.info("Compile done")
+        torch_tensorrt.save(
+            network,
+            compiled_path,
+            arg_inputs=inputs,
+        )
+        perf_logger.info("Saved compiled model")
+
     @torch.inference_mode()
     def perform_actual_validation(self, save_probabilities: bool = False, step_size: float = 0.5, validation_path: str = "validation"):
         self.set_deep_supervision_enabled(False)
@@ -1314,9 +1356,9 @@ class nnUNetTrainer(object):
         predictor = nnUNetPredictor(tile_step_size=step_size, use_gaussian=True, use_mirroring=True,
                                     perform_everything_on_device=False, device=self.device, verbose=False,
                                     verbose_preprocessing=False, allow_tqdm=False)
-        predictor.manual_initialization(self.network, self.plans_manager, self.configuration_manager, None,
+        predictor.manual_initialization(self.network, self.plans_manager, self.configuration_manager,
                                         self.dataset_json, self.__class__.__name__,
-                                        self.inference_allowed_mirroring_axes)
+                                        self.inference_allowed_mirroring_axes, self.output_folder)
 
         if os.getenv("sequential_validation", "1") == "1":
             print(f"Validation written to {validation_path}")

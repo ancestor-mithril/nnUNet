@@ -476,6 +476,29 @@ def validate(args):
     if not os.path.isfile(model_checkpoint):
         raise FileNotFoundError(f"Model checkpoint {model_checkpoint} not available, please train the model first")
 
+    compiled_path = os.path.join(fold_path, f"compiled_model_trt.ep")
+    if not os.path.isfile(compiled_path):
+        envs = {
+            "NUM_EPOCHS": str(num_epochs),
+            "CUDA_VISIBLE_DEVICES": str(args.device),
+            "USE_HALF": "1",
+            "USE_TENSOR_RT": "1",
+            **os.environ,
+        }
+        command = (
+            "nnUNetv2_train "
+            f"-p {envs['nnUNet_plans']} "
+            f"-tr {envs['nnUNet_trainer']} "
+            f"--save_trt "
+            f"{envs['nnUNet_dataset']} "
+            f"{envs['nnUNet_conf']} "
+            f"{args.fold} "
+        )
+        succeeded = run_command(command, envs)
+        if not succeeded:
+            print("Saving compiled model failed. Check the logs above for error")
+            raise RuntimeError("Saving compiled model failed")
+
     for step_size, other in [
         (0.5, None),  # Must be first
         # (0.5, "dilate_tromb"),
@@ -503,6 +526,7 @@ def validate(args):
             "NUM_EPOCHS": str(num_epochs),
             "CUDA_VISIBLE_DEVICES": str(args.device),
             "DO_VALIDATION": "1",
+            "USE_TENSOR_RT": "1",
             "USE_HALF": "1",
             **os.environ,
         }

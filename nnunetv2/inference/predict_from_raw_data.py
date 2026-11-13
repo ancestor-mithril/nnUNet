@@ -3,7 +3,9 @@ import inspect
 import itertools
 import multiprocessing
 import os
+import tempfile
 from copy import deepcopy
+from pathlib import Path
 from queue import Queue
 from threading import Thread
 from time import sleep
@@ -43,6 +45,19 @@ import inspect
 
 timer_data = dict()
 
+
+def is_file_writable(file_path: str | Path) -> bool:
+    path = Path(file_path)
+    existed = path.exists()
+    try:
+        with open(path, "a"):
+            pass
+        if not existed:
+            path.unlink()  # Clean up if the file didn't exist before
+        return True
+    except (OSError, PermissionError):
+        return False
+
 def is_finite(x):
     return torch.all(torch.isfinite(x))
 
@@ -79,6 +94,7 @@ class nnUNetPredictor(object):
                  verbose: bool = False,
                  verbose_preprocessing: bool = False,
                  allow_tqdm: bool = True):
+        os.environ["BATCHED_MIRROR"] = "0"
         self.is_finite = is_finite
         self.keep_model_on_cpu = False
         self.networks = []
@@ -87,8 +103,8 @@ class nnUNetPredictor(object):
         self.verbose_preprocessing = verbose_preprocessing
         self.allow_tqdm = allow_tqdm
 
-        self.plans_manager, self.configuration_manager, self.list_of_parameters, self.network, self.dataset_json, \
-        self.trainer_name, self.allowed_mirroring_axes, self.label_manager = None, None, None, None, None, None, None, None
+        self.plans_manager, self.configuration_manager, self.network, self.dataset_json, \
+        self.trainer_name, self.allowed_mirroring_axes, self.label_manager = None, None, None, None, None, None, None
 
         self.tile_step_size = tile_step_size
         self.use_gaussian = use_gaussian
@@ -116,21 +132,39 @@ class nnUNetPredictor(object):
         plans = load_json(join(model_training_output_dir, 'plans.json'))
         plans_manager = PlansManager(plans)
 
+        if os.getenv("USE_HALF", "0") == "1":
+            self.use_half = True
+        if os.getenv("USE_TENSOR_RT", "0") == "1":
+            self.use_tensor_rt = True
+            self.use_half = True
+
         if isinstance(use_folds, str):
             use_folds = [use_folds]
 
         parameters = []
+        compiled_paths = []
         for i, f in enumerate(use_folds):
             f = int(f) if f != 'all' else f
-            checkpoint = torch.load(join(model_training_output_dir, f'fold_{f}', checkpoint_name),
-                                    map_location=torch.device('cpu'), weights_only=False)
+            model_path = join(model_training_output_dir, f'fold_{f}')
+            compiled_path = None
+            if self.use_tensor_rt:
+                compiled_path = os.path.join(model_path, f"compiled_model_trt.ep")
+                compiled_paths.append(compiled_path)
+                if not os.path.isfile(compiled_path):
+                    compiled_path = None
+
+            if compiled_path is None or i == 0:
+                checkpoint = torch.load(join(model_path, checkpoint_name),
+                                        map_location=torch.device('cpu'), weights_only=False)
             if i == 0:
                 trainer_name = checkpoint['trainer_name']
                 configuration_name = checkpoint['init_args']['configuration']
                 inference_allowed_mirroring_axes = checkpoint['inference_allowed_mirroring_axes'] if \
                     'inference_allowed_mirroring_axes' in checkpoint.keys() else None
-
-            parameters.append(checkpoint['network_weights'])
+            if compiled_path is None:
+                parameters.append(checkpoint['network_weights'])
+            else:
+                parameters.append(compiled_path)
 
         configuration_manager = plans_manager.get_configuration(configuration_name)
         # restore network
@@ -151,11 +185,10 @@ class nnUNetPredictor(object):
 
         self.plans_manager = plans_manager
         self.configuration_manager = configuration_manager
-        self.list_of_parameters = parameters
 
-        # initialize network with first set of parameters, also see https://github.com/MIC-DKFZ/nnUNet/issues/2520
-        network.load_state_dict(parameters[0])
-
+        if not isinstance(parameters[0], str):
+            # initialize network with first set of parameters, also see https://github.com/MIC-DKFZ/nnUNet/issues/2520
+            network.load_state_dict(parameters[0])
         self.network = network
 
         self.dataset_json = dataset_json
@@ -163,61 +196,79 @@ class nnUNetPredictor(object):
         self.allowed_mirroring_axes = inference_allowed_mirroring_axes
         self.label_manager = plans_manager.get_label_manager(dataset_json)
 
-        if os.getenv("USE_HALF", "0") == "1":
-            self.use_half = True
-        if os.getenv("USE_TENSOR_RT", "0") == "1":
-            self.use_tensor_rt = True
-            self.use_half = True
-        use_compile = ('nnUNet_compile' in os.environ.keys()) and (os.environ['nnUNet_compile'].lower() in ('true', '1', 't')) and not isinstance(self.network, OptimizedModule)
+        use_compile = not self.use_tensor_rt and ('nnUNet_compile' in os.environ.keys()) and (os.environ['nnUNet_compile'].lower() in ('true', '1', 't')) and not isinstance(self.network, OptimizedModule)
 
         self.networks = []
-        self.keep_model_on_cpu = len(self.list_of_parameters) > 1 and not self.use_tensor_rt
-        for i in range(len(self.list_of_parameters)):
-            params = self.list_of_parameters[i]
-            network = deepcopy(self.network)
-            network.load_state_dict(params)
-            network.eval()
-            if self.use_tensor_rt or self.use_half:
+        self.keep_model_on_cpu = len(parameters) > 1 and not self.use_tensor_rt
+        for i in range(len(parameters)):
+            params = parameters[i]
+            if isinstance(params, str):
+                network = self.load_trt(params)
+                network.eval()
                 network = network.to(device=self.device, dtype=torch.float16)
             else:
-                network = network.to(self.device)
+                network = deepcopy(self.network)
+                network.load_state_dict(params)
+                network.eval()
+                if self.use_tensor_rt or self.use_half:
+                    network = network.to(device=self.device, dtype=torch.float16)
+                else:
+                    network = network.to(self.device)
 
-            if self.use_tensor_rt:
-                import torch_tensorrt
-                bs = (1 + len(self._get_mirror_axes(dim=1))) if os.getenv("BATCHED_MIRROR", "0") == "1" else 1
-                input_shape = (bs, num_input_channels, *self.configuration_manager.patch_size)
-                perf_logger.info(f"Using tensorrt. Compiling network with bs {bs}")
-                network = torch_tensorrt.compile(
-                    network,
-                    inputs=[
+                if self.use_tensor_rt:
+                    import torch_tensorrt
+                    bs = (1 + len(self._get_mirror_axes(dim=1))) if os.getenv("BATCHED_MIRROR", "0") == "1" else 1
+                    input_shape = (bs, num_input_channels, *self.configuration_manager.patch_size)
+                    perf_logger.info(f"Using tensorrt. Compiling network with bs {bs}")
+                    inputs = [
                         torch_tensorrt.Input(shape=input_shape, dtype=torch.float16)
-                    ],
-                    enabled_precisions={torch.float16},
-                    optimization_level=5,
-                    require_full_compilation=True,
-                    immutable_weights=True,
-                )
-                perf_logger.info("Compile done")
-            elif use_compile:
-                network = torch.compile(network)
-                print('Using torch.compile')
+                    ]
+                    network = torch_tensorrt.compile(
+                        network,
+                        inputs,
+                        enabled_precisions={torch.float16},
+                        optimization_level=5,
+                        require_full_compilation=True,
+                        immutable_weights=True,
+                        ir="dynamo",
+                    )
+                    perf_logger.info("Compile done")
+                    compiled_path = compiled_paths[i]
+                    if is_file_writable(compiled_path):
+                        torch_tensorrt.save(
+                            network,
+                            compiled_path,
+                            arg_inputs=inputs,
+                        )
+                        perf_logger.info("Saved compiled model")
+                    else:
+                        perf_logger.warning(f"Could not save compiled model to {compiled_path}")
+                elif use_compile:
+                    network = torch.compile(network)
+                    print('Using torch.compile')
             if self.keep_model_on_cpu:
                 network = network.cpu()
             self.networks.append(network)
         del self.network
         self.network = self.networks[0]
 
+    def load_trt(self, path):
+        if not os.path.isfile(path):
+            raise FileNotFoundError(f'File {path} does not exist')
+        import torch_tensorrt
+        return torch_tensorrt.load(path).module()
+
 
     def manual_initialization(self, network: nn.Module, plans_manager: PlansManager,
-                              configuration_manager: ConfigurationManager, parameters: Optional[List[dict]],
+                              configuration_manager: ConfigurationManager,
                               dataset_json: dict, trainer_name: str,
-                              inference_allowed_mirroring_axes: Optional[Tuple[int, ...]]):
+                              inference_allowed_mirroring_axes: Optional[Tuple[int, ...]],
+                              output_folder: str) -> None:
         """
         This is used by the nnUNetTrainer to initialize nnUNetPredictor for the final validation
         """
         self.plans_manager = plans_manager
         self.configuration_manager = configuration_manager
-        self.list_of_parameters = parameters
         self.network = network
         self.dataset_json = dataset_json
         self.trainer_name = trainer_name
@@ -233,8 +284,16 @@ class nnUNetPredictor(object):
         self.network.eval()
         if os.getenv("USE_HALF", "0") == "1":
             self.use_half = True
+        if os.getenv("USE_TENSOR_RT", "0") == "1":
+            self.use_tensor_rt = True
+            self.use_half = True
+
+        if self.use_half:
             self.network = self.network.to(device=self.device, dtype=torch.float16)
-        if allow_compile:
+
+        if self.use_tensor_rt:
+            self.network = self.load_trt(os.path.join(output_folder, f"compiled_model_trt.ep"))
+        elif allow_compile:
             print('Using torch.compile')
             self.network = torch.compile(self.network)
 
@@ -568,7 +627,7 @@ class nnUNetPredictor(object):
         if self.use_half:
             data = data.half()
 
-        for i in range(len(self.list_of_parameters)):
+        for i in range(len(self.networks)):
             self.network = self.networks[i]
             if self.keep_model_on_cpu:
                 self.network = self.network.to(self.device)
@@ -582,8 +641,8 @@ class nnUNetPredictor(object):
             if self.keep_model_on_cpu:
                 self.network = self.network.cpu()
 
-        if len(self.list_of_parameters) > 1:
-            prediction /= len(self.list_of_parameters)
+        if len(self.networks) > 1:
+            prediction /= len(self.networks)
 
         torch.set_num_threads(n_threads)
         del data

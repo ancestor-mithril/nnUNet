@@ -70,7 +70,7 @@ def get_trainer_from_args(dataset_name_or_id: Union[int, str],
 
 
 def maybe_load_checkpoint(nnunet_trainer: nnUNetTrainer, continue_training: bool, validation_only: bool,
-                          pretrained_weights_file: str = None):
+                          save_trt:bool, pretrained_weights_file: str = None):
     if continue_training and pretrained_weights_file is not None:
         raise RuntimeError('Cannot both continue a training AND load pretrained weights. Pretrained weights can only '
                            'be used at the beginning of the training.')
@@ -85,7 +85,7 @@ def maybe_load_checkpoint(nnunet_trainer: nnUNetTrainer, continue_training: bool
             print(f"WARNING: Cannot continue training because there seems to be no checkpoint available to "
                   f"continue from. Starting a new training...")
             expected_checkpoint_file = None
-    elif validation_only:
+    elif validation_only or save_trt:
         expected_checkpoint_file = join(nnunet_trainer.output_folder, 'checkpoint_final.pth')
         if not isfile(expected_checkpoint_file):
             raise RuntimeError(f"Cannot run validation because the training is not finished yet!")
@@ -109,9 +109,8 @@ def cleanup_ddp():
     dist.destroy_process_group()
 
 
-def run_ddp(rank, dataset_name_or_id, configuration, fold, tr, p, disable_checkpointing, c, val, step_size_for_val,
-            val_path,
-            pretrained_weights, npz, val_with_best, world_size):
+def run_ddp(rank, dataset_name_or_id, configuration, fold, tr, p, disable_checkpointing, c, val, save_trt,
+            step_size_for_val, val_path, pretrained_weights, npz, val_with_best, world_size):
     setup_ddp(rank, world_size)
     torch.cuda.set_device(torch.device('cuda', dist.get_rank()))
 
@@ -121,19 +120,25 @@ def run_ddp(rank, dataset_name_or_id, configuration, fold, tr, p, disable_checkp
         nnunet_trainer.disable_checkpointing = disable_checkpointing
 
     assert not (c and val), f'Cannot set --c and --val flag at the same time. Dummy.'
+    assert not (c and save_trt), f'Cannot set --c and --save_trt flag at the same time. Dummy.'
+    assert not (val and save_trt), f'Cannot set --val and --save_trt flag at the same time. Dummy.'
 
-    maybe_load_checkpoint(nnunet_trainer, c, val, pretrained_weights)
+    maybe_load_checkpoint(nnunet_trainer, c, val, save_trt, pretrained_weights)
 
     if torch.cuda.is_available():
         cudnn.deterministic = False
         cudnn.benchmark = True
 
-    if not val:
-        nnunet_trainer.run_training()
+    if save_trt:
+        nnunet_trainer.save_trt()
+    else:
+        if not val:
+            nnunet_trainer.run_training()
 
-    if val_with_best:
-        nnunet_trainer.load_checkpoint(join(nnunet_trainer.output_folder, 'checkpoint_best.pth'))
-    nnunet_trainer.perform_actual_validation(npz, step_size_for_val, val_path)
+        if val_with_best:
+            nnunet_trainer.load_checkpoint(join(nnunet_trainer.output_folder, 'checkpoint_best.pth'))
+
+        nnunet_trainer.perform_actual_validation(npz, step_size_for_val, val_path)
     cleanup_ddp()
 
 
@@ -146,6 +151,7 @@ def run_training(dataset_name_or_id: Union[str, int],
                  export_validation_probabilities: bool = False,
                  continue_training: bool = False,
                  only_run_validation: bool = False,
+                 save_trt: bool = False,
                  step_size_for_val: float = 0.5,
                  val_path: str = 'validation',
                  disable_checkpointing: bool = False,
@@ -165,6 +171,9 @@ def run_training(dataset_name_or_id: Union[str, int],
                 print(
                     f'Unable to convert given value for fold to int: {fold}. fold must bei either "all" or an integer!')
                 raise e
+
+    if save_trt:
+        os.environ["nnUNet_compile"] = "0"
 
     if val_with_best:
         assert not disable_checkpointing, '--val_best is not compatible with --disable_checkpointing'
@@ -188,6 +197,7 @@ def run_training(dataset_name_or_id: Union[str, int],
                      disable_checkpointing,
                      continue_training,
                      only_run_validation,
+                     save_trt,
                      step_size_for_val,
                      val_path,
                      pretrained_weights,
@@ -203,25 +213,31 @@ def run_training(dataset_name_or_id: Union[str, int],
         if disable_checkpointing:
             nnunet_trainer.disable_checkpointing = disable_checkpointing
 
-        assert not (
-                    continue_training and only_run_validation), f'Cannot set --c and --val flag at the same time. Dummy.'
+        assert not (continue_training and only_run_validation), f'Cannot set --c and --val flag at the same time. Dummy.'
+        assert not (continue_training and save_trt), f'Cannot set --c and --save_trt flag at the same time. Dummy.'
+        assert not (only_run_validation and save_trt), f'Cannot set --val and --save_trt flag at the same time. Dummy.'
 
         if os.getenv("EXIT_AFTER_SPLIT", "0") == "0":
-            maybe_load_checkpoint(nnunet_trainer, continue_training, only_run_validation, pretrained_weights)
+            maybe_load_checkpoint(nnunet_trainer, continue_training, only_run_validation, save_trt, pretrained_weights)
 
         if torch.cuda.is_available():
             cudnn.deterministic = False
             cudnn.benchmark = True
 
-        if not only_run_validation:
-            nnunet_trainer.run_training()
-
-        if val_with_best:
-            nnunet_trainer.load_checkpoint(join(nnunet_trainer.output_folder, 'checkpoint_best.pth'))
-        if os.getenv("DO_VALIDATION", "0") == "1":
-            nnunet_trainer.perform_actual_validation(export_validation_probabilities, step_size_for_val, val_path)
+        if save_trt:
+            nnunet_trainer.save_trt()
+            print("Saved compiled model")
         else:
-            print("Validation not done. To run validation, set the environment: DO_VALIDATION=1")
+            if not only_run_validation:
+                nnunet_trainer.run_training()
+
+            if val_with_best:
+                nnunet_trainer.load_checkpoint(join(nnunet_trainer.output_folder, 'checkpoint_best.pth'))
+
+            if os.getenv("DO_VALIDATION", "0") == "1":
+                nnunet_trainer.perform_actual_validation(export_validation_probabilities, step_size_for_val, val_path)
+            else:
+                print("Validation not done. To run validation, set the environment: DO_VALIDATION=1")
 
 
 def run_training_entry():
@@ -249,6 +265,8 @@ def run_training_entry():
                         help='[OPTIONAL] Continue training from latest checkpoint')
     parser.add_argument('--val', action='store_true', required=False,
                         help='[OPTIONAL] Set this flag to only run the validation. Requires training to have finished.')
+    parser.add_argument('--save_trt', action='store_true', required=False,
+                        help='[OPTIONAL] Set this flag to save a compiled model. Requires training to have finished.')
     parser.add_argument('-step_size_for_val', type=float, default=0.5, required=False)
     parser.add_argument('-val_path', type=str, default="validation", required=False)
     parser.add_argument('--val_best', action='store_true', required=False,
@@ -280,7 +298,7 @@ def run_training_entry():
         device = torch.device('mps')
 
     run_training(args.dataset_name_or_id, args.configuration, args.fold, args.tr, args.p, args.pretrained_weights,
-                 args.num_gpus, args.npz, args.c, args.val, args.step_size_for_val, args.val_path,
+                 args.num_gpus, args.npz, args.c, args.val, args.save_trt, args.step_size_for_val, args.val_path,
                  args.disable_checkpointing, args.val_best,
                  device=device)
 
