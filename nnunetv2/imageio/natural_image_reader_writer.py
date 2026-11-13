@@ -16,6 +16,7 @@
 from typing import Tuple, Union, List
 import numpy as np
 from nnunetv2.imageio.base_reader_writer import BaseReaderWriter
+import tifffile
 from skimage import io
 
 
@@ -30,7 +31,8 @@ class NaturalImage2DIO(BaseReaderWriter):
         # '.jpg',
         # '.jpeg', # jpg not supported because we cannot allow lossy compression! segmentation maps!
         '.bmp',
-        '.tif'
+        '.tif',
+        '.tiff',
     ]
 
     def read_images(self, image_fnames: Union[List[str], Tuple[str, ...]]) -> Tuple[np.ndarray, dict]:
@@ -59,10 +61,24 @@ class NaturalImage2DIO(BaseReaderWriter):
         return np.vstack(images, dtype=np.float32, casting='unsafe'), {'spacing': (999, 1, 1)}
 
     def read_seg(self, seg_fname: str) -> Tuple[np.ndarray, dict]:
-        return self.read_images((seg_fname, ))
+        seg, props = self.read_images((seg_fname, ))
+        if seg.shape[0] != 1:
+            raise RuntimeError(
+                f"Segmentation file {seg_fname} has {seg.shape[0]} channels. nnU-Net expects "
+                f"segmentation files to be single-channel integer label maps. Please re-save your "
+                f"label files as grayscale (single-channel) images with integer class indices "
+                f"(0, 1, 2, ...)."
+            )
+        return seg, props
 
     def write_seg(self, seg: np.ndarray, output_fname: str, properties: dict) -> None:
-        io.imsave(output_fname, seg[0].astype(np.uint8 if np.max(seg) < 255 else np.uint16, copy=False), check_contrast=False)
+        # PackBits (RLE) is lossless and fits sparse row-major 2D label maps better than
+        # Deflate; it is also faster. PNG/BMP stay on skimage. 3D TIFFs keep zlib in Tiff3DIO.
+        seg = seg[0].astype(np.uint8 if np.max(seg) < 255 else np.uint16, copy=False)
+        if str(output_fname).lower().endswith(('.tif', '.tiff')):
+            tifffile.imwrite(output_fname, seg, compression='packbits')
+        else:
+            io.imsave(output_fname, seg, check_contrast=False)
 
 
 if __name__ == '__main__':

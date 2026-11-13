@@ -1,5 +1,6 @@
 import math
 import os
+import warnings
 from abc import ABC, abstractmethod
 from typing import List, Union, Type
 from typing import Optional, Sequence, Tuple
@@ -9,7 +10,79 @@ import numpy as np
 from batchgenerators.utilities.file_and_folder_operations import join, load_pickle, isfile, write_pickle, subfiles
 
 from nnunetv2.configuration import default_num_processes
+from nnunetv2.training.dataloading.foreground_locations import (
+    MMAP_KWARGS, ForegroundLocationsBase, announce_missing_store, get_foreground_locations)
 from nnunetv2.training.dataloading.utils import unpack_dataset
+
+# Read-ahead threads per process for blosc2 versions that have read-ahead (blosc2.set_prefetch)
+BLOSC2_READ_AHEAD_THREADS = 4
+_blosc2_read_ahead_pid = None
+
+
+def enable_blosc2_read_ahead():
+    """
+    Turn on blosc2's read-ahead once per process, if the installed blosc2 has it.
+
+    With read-ahead, a few threads fetch all chunks a patch needs at once, in large reads, while blosc2 decompresses
+    the ones that have arrived. Without it, data that is not in the page cache is read one small piece after the
+    other. With nnU-Net's data loader on NFS (8 loader processes, cases not in the page cache) this gives 3.2x (KiTS)
+    and 1.8x (BraTS) more batches per second; when the data is in the page cache, the throughput of several loader
+    processes stays within a few percent.
+
+    The setting is per process, so this runs in every process that loads cases (the data loader workers too).
+    blosc2's own BLOSC_PREFETCH environment variable takes precedence: if it is set, blosc2 has applied it already and
+    nothing is changed here. BLOSC_PREFETCH=0 turns read-ahead off. 4 threads also suit nodes that run many trainings:
+    on NFS, with up to 96 loader processes per node, no other setting was clearly faster. Older blosc2 versions do not
+    have read-ahead; then this does nothing.
+    """
+    global _blosc2_read_ahead_pid
+    pid = os.getpid()
+    if _blosc2_read_ahead_pid == pid:
+        return
+    _blosc2_read_ahead_pid = pid
+    if 'BLOSC_PREFETCH' in os.environ or not hasattr(blosc2, 'set_prefetch'):
+        return
+    try:
+        blosc2.set_prefetch(BLOSC2_READ_AHEAD_THREADS)
+    except Exception as e:  # read-ahead only makes reading faster; it must never stop a training
+        warnings.warn(f'Could not turn on blosc2 read-ahead ({e!r}); reading without it.')
+
+
+def write_b2nd(arr: np.ndarray, path: str, chunks, blocks, cparams: dict) -> None:
+    """
+    Compress ``arr`` into a blosc2 array in RAM and write it to ``path`` with Python's own file I/O, so that every
+    write error raises.
+
+    Letting blosc2 write the file (blosc2.asarray(urlpath=...)) catches errors of the write calls themselves, but not
+    errors reported when the file is closed: blosc2 discards the result of closing the file and never calls fsync
+    (checked up to c-blosc2 3.5.0). Network filesystems such as NFS report a full quota or disk only when the data
+    reaches the server, which is at fsync or close at the latest, so preprocessing onto a full NFS share could leave
+    truncated cases behind and still finish without an error. Python raises on errors in write, fsync and close.
+
+    The data is written to ``path + '.tmp'`` and renamed onto ``path`` once it is on disk, so a failed or interrupted
+    write never leaves a partial file under the final name. An existing file at ``path`` is replaced.
+
+    The compressed array is held in RAM twice while it is written: as a frame (contiguous=True) and as the bytes
+    to_cframe() copies it into. Without contiguous=True, blosc2 releases up to 4.14.1 build a third copy in
+    to_cframe(). The files are the same either way.
+    """
+    compressed = blosc2.asarray(np.ascontiguousarray(arr), chunks=chunks, blocks=blocks, cparams=cparams,
+                                contiguous=True)
+    cframe = compressed.to_cframe()
+    del compressed
+    tmp = path + '.tmp'
+    try:
+        with open(tmp, 'wb') as f:
+            f.write(cframe)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
 
 
 def comp_blosc2_params(
@@ -216,13 +289,44 @@ class nnUNetBaseDataset(ABC):
         self.source_folder = folder
         self.folder_with_segs_from_previous_stage = folder_with_segs_from_previous_stage
         self.identifiers = identifiers
+        # resolved on first use: datasets that are only used for validation never touch it. That first use
+        # happens inside the dataloader workers though, so the "no store found" notice has to be emitted
+        # here instead - this runs in the process that builds the dataset, exactly once.
+        self._foreground_locations = None
+        announce_missing_store(folder)
+
+    @property
+    def foreground_locations(self) -> ForegroundLocationsBase:
+        """
+        Access to the foreground sampling locations of this dataset. Backed by the compressed store if one is
+        present, otherwise by the legacy class_locations entries in the per-case pkl files.
+        """
+        if self._foreground_locations is None:
+            self._foreground_locations = get_foreground_locations(self.source_folder)
+        return self._foreground_locations
 
     def __getitem__(self, identifier):
         return self.load_case(identifier)
 
     @abstractmethod
     def load_case(self, identifier):
+        """
+        Returns (data, seg, seg_prev). Deliberately does NOT return the case properties: the training
+        dataloader does not need them, and reading them for every patch used to be the single most expensive
+        part of dataloading. Use get_properties() if you need them.
+        """
         pass
+
+    def get_properties(self, identifier) -> dict:
+        """Case properties (spacing, cropping bbox, shapes, ...). Needed for validation/export, not for training."""
+        return load_pickle(join(self.source_folder, identifier + '.pkl'))
+
+    def get_shape(self, identifier) -> Tuple[int, ...]:
+        """
+        Spatial shape of a case (no channel axis). The implementations below read it from the array header
+        without touching any voxels; this fallback exists so that subclasses do not have to implement it.
+        """
+        return tuple(self.load_case(identifier)[0].shape[1:])
 
     @staticmethod
     @abstractmethod
@@ -248,6 +352,9 @@ class nnUNetBaseDataset(ABC):
 
 class nnUNetDatasetNumpy(nnUNetBaseDataset):
     def load_case(self, identifier):
+        # .npy files are mapped read-only. nnUNetDataLoader copies the crops of them it hands to the data augmentation.
+        # Copy-on-write mappings (mmap_mode='c') would avoid some of those copies, but each write then costs a page
+        # fault per 4 kB, which is several times slower than copying the crop
         data_npy_file = join(self.source_folder, identifier + '.npy')
         if not isfile(data_npy_file):
             data = np.load(join(self.source_folder, identifier + '.npz'))['data']
@@ -263,14 +370,19 @@ class nnUNetDatasetNumpy(nnUNetBaseDataset):
         if self.folder_with_segs_from_previous_stage is not None:
             prev_seg_npy_file = join(self.folder_with_segs_from_previous_stage, identifier + '.npy')
             if isfile(prev_seg_npy_file):
-                seg_prev = np.load(prev_seg_npy_file, 'r')
+                seg_prev = np.load(prev_seg_npy_file, mmap_mode='r')
             else:
                 seg_prev = np.load(join(self.folder_with_segs_from_previous_stage, identifier + '.npz'))['seg']
         else:
             seg_prev = None
 
-        properties = load_pickle(join(self.source_folder, identifier + '.pkl'))
-        return data, seg, seg_prev, properties
+        return data, seg, seg_prev
+
+    def get_shape(self, identifier) -> Tuple[int, ...]:
+        data_npy_file = join(self.source_folder, identifier + '.npy')
+        if isfile(data_npy_file):
+            return tuple(np.load(data_npy_file, mmap_mode='r').shape[1:])
+        return tuple(np.load(join(self.source_folder, identifier + '.npz'))['data'].shape[1:])
 
     @staticmethod
     def save_case(
@@ -309,13 +421,13 @@ class nnUNetDatasetBlosc2(nnUNetBaseDataset):
                  folder_with_segs_from_previous_stage: str = None):
         super().__init__(folder, identifiers, folder_with_segs_from_previous_stage)
         blosc2.set_nthreads(1)
-        # mmap does not work with Windows -> https://github.com/MIC-DKFZ/nnUNet/issues/2723
-        self.mmap_kwargs = {} if os.name == "nt" else {'mmap_mode': 'r'}
+        self.mmap_kwargs = MMAP_KWARGS
 
     def __getitem__(self, identifier):
         return self.load_case(identifier)
 
     def load_case(self, identifier):
+        enable_blosc2_read_ahead()
         dparams = {
             'nthreads': 1
         }
@@ -332,8 +444,12 @@ class nnUNetDatasetBlosc2(nnUNetBaseDataset):
         else:
             seg_prev = None
 
-        properties = load_pickle(join(self.source_folder, identifier + '.pkl'))
-        return data, seg, seg_prev, properties
+        return data, seg, seg_prev
+
+    def get_shape(self, identifier) -> Tuple[int, ...]:
+        # blosc2.open only reads the frame header, no voxels are decompressed
+        return tuple(blosc2.open(urlpath=join(self.source_folder, identifier + '.b2nd'), mode='r',
+                                 dparams={'nthreads': 1}, **self.mmap_kwargs).shape[1:])
 
     @staticmethod
     def _select_filter(arr: np.ndarray, blocks, chunks, codec, clevel) -> "blosc2.Filter":
@@ -428,21 +544,8 @@ class nnUNetDatasetBlosc2(nnUNetBaseDataset):
 
         # print(output_filename_truncated, data.shape, seg.shape, blocks, chunks, blocks_seg, chunks_seg, data.dtype, seg.dtype)
 
-        blosc2.asarray(
-            np.ascontiguousarray(data),
-            urlpath=output_filename_truncated + '.b2nd',
-            chunks=chunks,
-            blocks=blocks,
-            cparams=cparams,
-        )
-
-        blosc2.asarray(
-            np.ascontiguousarray(seg),
-            urlpath=output_filename_truncated + '_seg.b2nd',
-            chunks=chunks_seg,
-            blocks=blocks_seg,
-            cparams=cparams_seg,
-        )
+        write_b2nd(data, output_filename_truncated + '.b2nd', chunks, blocks, cparams)
+        write_b2nd(seg, output_filename_truncated + '_seg.b2nd', chunks_seg, blocks_seg, cparams_seg)
 
         write_pickle(properties, output_filename_truncated + '.pkl')
 
@@ -453,9 +556,12 @@ class nnUNetDatasetBlosc2(nnUNetBaseDataset):
             chunks_seg=None,
             blocks_seg=None
     ):
+        # Remove an existing file first, so that a failed write does not leave an older segmentation in its place
         if isfile(output_filename_truncated + '.b2nd'):
             os.remove(output_filename_truncated + '.b2nd')
-        blosc2.asarray(seg, urlpath=output_filename_truncated + '.b2nd', chunks=chunks_seg, blocks=blocks_seg)
+        # Without an explicit thread count blosc2 uses the process-wide blosc2.nthreads (all cores unless
+        # set_nthreads(1) ran in this process). save_seg runs in the export pool's workers, so that oversubscribes.
+        write_b2nd(seg, output_filename_truncated + '.b2nd', chunks_seg, blocks_seg, {'nthreads': 1})
 
     @staticmethod
     def get_identifiers(folder: str) -> List[str]:

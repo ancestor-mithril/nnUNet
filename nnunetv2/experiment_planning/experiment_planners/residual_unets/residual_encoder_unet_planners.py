@@ -191,30 +191,8 @@ class ResEncUNetPlanner(ExperimentPlanner):
             approximate_n_voxels_dataset * self.max_dataset_covered / np.prod(patch_size, dtype=np.float64))
         batch_size = max(min(batch_size, bs_corresponding_to_5_percent), self.UNet_min_batch_size)
 
-        resampling_data, resampling_data_kwargs, resampling_seg, resampling_seg_kwargs = self.determine_resampling()
-        resampling_softmax, resampling_softmax_kwargs = self.determine_segmentation_softmax_export_fn()
-
-        normalization_schemes, mask_is_used_for_norm = \
-            self.determine_normalization_scheme_and_whether_mask_is_used_for_norm()
-
-        plan = {
-            'data_identifier': data_identifier,
-            'preprocessor_name': self.preprocessor_name,
-            'batch_size': batch_size,
-            'patch_size': patch_size,
-            'median_image_size_in_voxels': median_shape,
-            'spacing': spacing,
-            'normalization_schemes': normalization_schemes,
-            'use_mask_for_norm': mask_is_used_for_norm,
-            'resampling_fn_data': resampling_data.__name__,
-            'resampling_fn_seg': resampling_seg.__name__,
-            'resampling_fn_data_kwargs': resampling_data_kwargs,
-            'resampling_fn_seg_kwargs': resampling_seg_kwargs,
-            'resampling_fn_probabilities': resampling_softmax.__name__,
-            'resampling_fn_probabilities_kwargs': resampling_softmax_kwargs,
-            'architecture': architecture_kwargs
-        }
-        return plan
+        return self.assemble_plan(data_identifier, batch_size, patch_size, median_shape, spacing,
+                                  architecture_kwargs)
 
 
 class nnUNetPlannerResEncM(ResEncUNetPlanner):

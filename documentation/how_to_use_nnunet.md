@@ -54,6 +54,11 @@ about all the options available to you please run `nnUNetv2_plan_and_preprocess 
 nnUNetv2_plan_and_preprocess will create a new subfolder in your nnUNet_preprocessed folder named after the dataset.
 Once the command is completed there will be a dataset_fingerprint.json file as well as a nnUNetPlans.json file for you to look at
 (in case you are interested!). There will also be subfolders containing the preprocessed data for your UNet configurations.
+Each of those subfolders holds the preprocessed images and segmentations, one small `.pkl` of case properties per case,
+and a shared foreground sampling location store (the `fg_sampling/` folder). See the
+[preprocessed data format reference](reference/preprocessed-data-format.md) for what those are and how to rebuild them
+with `nnUNetv2_extract_sampling_locations` - in particular if you have datasets that were preprocessed with an older
+version of nnU-Net.
 
 [Optional]
 If you prefer to keep things separate, you can also use `nnUNetv2_extract_fingerprint`, `nnUNetv2_plan_experiment`
@@ -87,7 +92,7 @@ UNET_CONFIGURATION is a string that identifies the requested U-Net configuration
 the 5-fold-cross-validation is trained.
 
 nnU-Net stores a checkpoint every 50 epochs. If you need to continue a previous training, just add a `--c` to the
-training command.
+training command. It continues from `checkpoint_latest` or `checkpoint_best`, whichever has more finished epochs.
 
 IMPORTANT: If you plan to use `nnUNetv2_find_best_configuration` (see below) add the `--npz` flag. This makes
 nnU-Net save the softmax outputs during the final validation. They are needed for that. Exported softmax
@@ -161,10 +166,12 @@ Note that 3d_lowres and 3d_cascade_fullres do not exist here because this datase
 model training output folder (each of the fold_x folder), the following files will be created:
 - debug.json: Contains a summary of blueprint and inferred parameters used for training this model as well as a
 bunch of additional stuff. Not easy to read, but very useful for debugging ;-)
-- checkpoint_best.pth: checkpoint files of the best model identified during training. Not used right now unless you
+- checkpoint_best.safetensors: checkpoint files of the best model identified during training. Not used right now unless you
 explicitly tell nnU-Net to use it.
-- checkpoint_final.pth: checkpoint file of the final model (after training has ended). This is what is used for both
-validation and inference.
+- checkpoint_final.safetensors: checkpoint file of the final model (after training has ended). This is what is used for both
+validation and inference. It holds no optimizer state, which makes it much smaller than checkpoint_best.
+- (checkpoint_latest.safetensors: only while a training runs. Written every 50 epochs so that `--c` can continue the
+training, deleted when it ends. `--c` uses checkpoint_best instead if that one is newer.)
 - network_architecture.pdf (only if hiddenlayer is installed!): a pdf document with a figure of the network architecture in it.
 - progress.png: Shows losses, pseudo dice, learning rate and epoch times over the course of the training. At the top is
 a plot of the training (blue) and validation (red) loss during training. Also shows an approximation of
@@ -180,6 +187,9 @@ a plot of the training (blue) and validation (red) loss during training. Also sh
   contains the validation metrics (a mean over all cases is provided at the start of the file). If `--npz` was set then
 the compressed softmax outputs (saved as .npz files) are in here as well.
 
+Models trained with older nnU-Net versions have `.pth` checkpoints instead. They are still read everywhere a checkpoint
+is read, and `nnUNetv2_convert_checkpoints_to_safetensors` converts them (see the changelog).
+
 During training it is often useful to watch the progress. We therefore recommend that you have a look at the generated
 progress.png when running the first training. It will be updated after each epoch.
 
@@ -189,41 +199,7 @@ performing as expected.
 
 ### Using multiple GPUs for training
 
-If multiple GPUs are at your disposal, the best way of using them is to train multiple nnU-Net trainings at once, one
-on each GPU. This is because data parallelism never scales perfectly linearly, especially not with small networks such
-as the ones used by nnU-Net.
-
-Example:
-
-```bash
-CUDA_VISIBLE_DEVICES=0 nnUNetv2_train DATASET_NAME_OR_ID 2d 0 [--npz] & # train on GPU 0
-CUDA_VISIBLE_DEVICES=1 nnUNetv2_train DATASET_NAME_OR_ID 2d 1 [--npz] & # train on GPU 1
-CUDA_VISIBLE_DEVICES=2 nnUNetv2_train DATASET_NAME_OR_ID 2d 2 [--npz] & # train on GPU 2
-CUDA_VISIBLE_DEVICES=3 nnUNetv2_train DATASET_NAME_OR_ID 2d 3 [--npz] & # train on GPU 3
-CUDA_VISIBLE_DEVICES=4 nnUNetv2_train DATASET_NAME_OR_ID 2d 4 [--npz] & # train on GPU 4
-...
-wait
-```
-
-**Important: The first time a training is run nnU-Net will extract the preprocessed data into uncompressed numpy
-arrays for speed reasons! This operation must be completed before starting more than one training of the same
-configuration! Wait with starting subsequent folds until the first training is using the GPU! Depending on the
-dataset size and your System this should only take a couple of minutes at most.**
-
-If you insist on running DDP multi-GPU training, we got you covered:
-
-`nnUNetv2_train DATASET_NAME_OR_ID 2d 0 [--npz] -num_gpus X`
-
-Again, note that this will be slower than running separate training on separate GPUs. DDP only makes sense if you have
-manually interfered with the nnU-Net configuration and are training larger models with larger patch and/or batch sizes!
-
-Important when using `-num_gpus`:
-1) If you train using, say, 2 GPUs but have more GPUs in the system you need to specify which GPUs should be used via
-CUDA_VISIBLE_DEVICES=0,1 (or whatever your ids are).
-2) You cannot specify more GPUs than you have samples in your minibatches. If the batch size is 2, 2 GPUs is the maximum!
-3) Make sure your batch size is divisible by the numbers of GPUs you use or you will not make good use of your hardware.
-
-In contrast to the old nnU-Net, DDP is now completely hassle free. Enjoy!
+See [here](multi_gpu_training.md)
 
 ### Automatically determine the best configuration
 Once the desired configurations were trained (full cross-validation) you can tell nnU-Net to automatically identify

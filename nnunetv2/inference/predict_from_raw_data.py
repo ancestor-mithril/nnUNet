@@ -1,6 +1,7 @@
 import inspect
 import itertools
 import warnings
+import weakref
 import multiprocessing
 import os
 from copy import deepcopy
@@ -16,7 +17,6 @@ from batchgenerators.dataloading.multi_threaded_augmenter import MultiThreadedAu
 from batchgenerators.utilities.file_and_folder_operations import load_json, join, isfile, maybe_mkdir_p, isdir, subdirs, \
     save_json
 from torch import nn
-from torch._dynamo import OptimizedModule
 from torch.nn.parallel import DistributedDataParallel
 from tqdm import tqdm
 
@@ -27,9 +27,12 @@ from nnunetv2.inference.export_prediction import export_prediction_from_logits, 
     convert_predicted_logits_to_segmentation_with_correct_shape
 from nnunetv2.inference.sliding_window_prediction import compute_gaussian, \
     compute_steps_for_sliding_window
+from nnunetv2.preprocessing.preprocessors.default_preprocessor import skip_seg_kwargs
 from nnunetv2.utilities.file_path_utilities import get_output_folder, check_workers_alive_and_busy
+from nnunetv2.utilities.checkpoints import find_checkpoint_file, load_checkpoint_file
 from nnunetv2.utilities.find_objects import recursive_find_trainer_class_by_name
-from nnunetv2.utilities.helpers import empty_cache, dummy_context
+from nnunetv2.utilities.helpers import empty_cache, dummy_context, is_optimized_module, \
+    set_default_inductor_cache_dir
 from nnunetv2.utilities.json_export import recursive_fix_for_json_export
 from nnunetv2.utilities.label_handling.label_handling import determine_num_input_channels, \
     convert_labelmap_to_one_hot
@@ -53,13 +56,16 @@ class nnUNetPredictor(object):
 
         self.plans_manager, self.configuration_manager, self.list_of_parameters, self.network, self.dataset_json, \
         self.trainer_name, self.allowed_mirroring_axes, self.label_manager = None, None, None, None, None, None, None, None
+        # (network module, state dict) last loaded by _load_parameters, see there
+        self._loaded_parameters = None
 
         self.tile_step_size = tile_step_size
         self.use_gaussian = use_gaussian
         self.use_mirroring = use_mirroring
-        if device.type == 'cuda':
-            torch.backends.cudnn.benchmark = True
-        else:
+        # torch.backends.cudnn.benchmark is left as it is: its algorithm search costs time and device memory on the
+        # first case, which only pays off over many cases, and the algorithms it picks (and with them the predictions)
+        # can differ between runs
+        if device.type != 'cuda':
             print('perform_everything_on_device=True is only supported for cuda devices! Setting this to False')
             perform_everything_on_device = False
         self.device = device
@@ -67,9 +73,12 @@ class nnUNetPredictor(object):
 
     def initialize_from_trained_model_folder(self, model_training_output_dir: str,
                                              use_folds: Union[Tuple[Union[int, str]], None],
-                                             checkpoint_name: str = 'checkpoint_final.pth'):
+                                             checkpoint_name: str = 'checkpoint_final.safetensors'):
         """
         This is used when making predictions with a trained model
+
+        checkpoint_name may name either format: if the file does not exist, the same name with the other extension
+        (.safetensors <-> .pth) is used. Models trained with older nnU-Net versions have .pth checkpoints.
         """
         if use_folds is None:
             use_folds = nnUNetPredictor.auto_detect_available_folds(model_training_output_dir, checkpoint_name)
@@ -84,8 +93,9 @@ class nnUNetPredictor(object):
         parameters = []
         for i, f in enumerate(use_folds):
             f = int(f) if f != 'all' else f
-            checkpoint = torch.load(join(model_training_output_dir, f'fold_{f}', checkpoint_name),
-                                    map_location=torch.device('cpu'), weights_only=False)
+            checkpoint = load_checkpoint_file(
+                join(model_training_output_dir, f'fold_{f}', checkpoint_name), map_location=torch.device('cpu'),
+                keys=('network_weights', 'trainer_name', 'init_args', 'inference_allowed_mirroring_axes'))
             if i == 0:
                 trainer_name = checkpoint['trainer_name']
                 configuration_name = checkpoint['init_args']['configuration']
@@ -131,14 +141,16 @@ class nnUNetPredictor(object):
         network.load_state_dict(parameters[0])
 
         self.network = network
+        self._loaded_parameters = (weakref.ref(network), parameters[0])
 
         self.dataset_json = dataset_json
         self.trainer_name = trainer_name
         self.allowed_mirroring_axes = inference_allowed_mirroring_axes
         self.label_manager = plans_manager.get_label_manager(dataset_json)
         if ('nnUNet_compile' in os.environ.keys()) and (os.environ['nnUNet_compile'].lower() in ('true', '1', 't')) \
-                and not isinstance(self.network, OptimizedModule):
+                and not is_optimized_module(self.network):
             print('Using torch.compile')
+            set_default_inductor_cache_dir()
             self.network = torch.compile(self.network)
 
     def manual_initialization(self, network: nn.Module, plans_manager: PlansManager,
@@ -152,6 +164,8 @@ class nnUNetPredictor(object):
         self.configuration_manager = configuration_manager
         self.list_of_parameters = parameters
         self.network = network
+        # we don't know what network holds, so the first prediction loads parameters[0]
+        self._loaded_parameters = None
         self.dataset_json = dataset_json
         self.trainer_name = trainer_name
         self.allowed_mirroring_axes = inference_allowed_mirroring_axes
@@ -159,11 +173,12 @@ class nnUNetPredictor(object):
         allow_compile = True
         allow_compile = allow_compile and ('nnUNet_compile' in os.environ.keys()) and (
                     os.environ['nnUNet_compile'].lower() in ('true', '1', 't'))
-        allow_compile = allow_compile and not isinstance(self.network, OptimizedModule)
+        allow_compile = allow_compile and not is_optimized_module(self.network)
         if isinstance(self.network, DistributedDataParallel):
-            allow_compile = allow_compile and isinstance(self.network.module, OptimizedModule)
+            allow_compile = allow_compile and is_optimized_module(self.network.module)
         if allow_compile:
             print('Using torch.compile')
+            set_default_inductor_cache_dir()
             self.network = torch.compile(self.network)
 
     @staticmethod
@@ -171,7 +186,8 @@ class nnUNetPredictor(object):
         print('use_folds is None, attempting to auto detect available folds')
         fold_folders = subdirs(model_training_output_dir, prefix='fold_', join=False)
         fold_folders = [i for i in fold_folders if i != 'fold_all']
-        fold_folders = [i for i in fold_folders if isfile(join(model_training_output_dir, i, checkpoint_name))]
+        fold_folders = [i for i in fold_folders
+                        if find_checkpoint_file(join(model_training_output_dir, i, checkpoint_name)) is not None]
         use_folds = [int(i.split('_')[-1]) for i in fold_folders]
         print(f'found the following folds: {use_folds}')
         return use_folds
@@ -444,8 +460,6 @@ class nnUNetPredictor(object):
         if isinstance(data_iterator, MultiThreadedAugmenter):
             data_iterator._finish()
 
-        # clear lru cache
-        compute_gaussian.cache_clear()
         # clear device cache
         empty_cache(self.device)
         return ret
@@ -497,6 +511,20 @@ class nnUNetPredictor(object):
             else:
                 return ret
 
+    def _load_parameters(self, params: dict):
+        """
+        Loads params into self.network unless it holds them already (tracked by identity of module and state dict), so
+        a single model is not reloaded for every case. Changing weights in place is not detected: whoever does that
+        must load them or set self._loaded_parameters = None.
+        """
+        # messing with state dict names...
+        module = self.network._orig_mod if is_optimized_module(self.network) else self.network
+        loaded = getattr(self, '_loaded_parameters', None)  # subclasses might not call our __init__
+        if loaded is not None and loaded[0]() is module and loaded[1] is params:
+            return
+        module.load_state_dict(params)
+        self._loaded_parameters = (weakref.ref(module), params)
+
     @torch.inference_mode()
     def predict_logits_from_preprocessed_data(self, data: torch.Tensor) -> torch.Tensor:
         """
@@ -511,12 +539,7 @@ class nnUNetPredictor(object):
         prediction = None
 
         for params in self.list_of_parameters:
-
-            # messing with state dict names...
-            if not isinstance(self.network, OptimizedModule):
-                self.network.load_state_dict(params)
-            else:
-                self.network._orig_mod.load_state_dict(params)
+            self._load_parameters(params)
 
             # why not leave prediction on device if perform_everything_on_device? Because this may cause the
             # second iteration to crash due to OOM. Grabbing that with try except cause way more bloated code than
@@ -777,7 +800,8 @@ class nnUNetPredictor(object):
                 sps,
                 self.plans_manager,
                 self.configuration_manager,
-                self.dataset_json
+                self.dataset_json,
+                **skip_seg_kwargs(preprocessor.run_case)
             )
             if folder_with_segs_from_prev_stage is not None:
                 seg_onehot = convert_labelmap_to_one_hot(seg[0], label_manager.foreground_labels, data.dtype)
@@ -796,8 +820,6 @@ class nnUNetPredictor(object):
                      data_properties,
                      save_probabilities))
 
-        # clear lru cache
-        compute_gaussian.cache_clear()
         # clear device cache
         empty_cache(self.device)
         return ret
@@ -840,8 +862,10 @@ def predict_entry_point_modelfolder():
                              'multiple configurations.')
     parser.add_argument('--continue_prediction', '--c', action='store_true',
                         help='Continue an aborted previous prediction (will not overwrite existing files)')
-    parser.add_argument('-chk', type=str, required=False, default='checkpoint_final.pth',
-                        help='Name of the checkpoint you want to use. Default: checkpoint_final.pth')
+    parser.add_argument('-chk', type=str, required=False, default='checkpoint_final.safetensors',
+                        help='Name of the checkpoint you want to use. Default: checkpoint_final.safetensors. If it '
+                             'does not exist, the same name with .pth is used (models trained with older nnU-Net '
+                             'versions have .pth checkpoints), and vice versa.')
     parser.add_argument('-npp', type=int, required=False, default=3,
                         help='Number of processes used for preprocessing. More is not always better. Beware of '
                              'out-of-RAM issues. Default: 3')
@@ -944,8 +968,10 @@ def predict_entry_point():
                              'multiple configurations.')
     parser.add_argument('--continue_prediction', action='store_true',
                         help='Continue an aborted previous prediction (will not overwrite existing files)')
-    parser.add_argument('-chk', type=str, required=False, default='checkpoint_final.pth',
-                        help='Name of the checkpoint you want to use. Default: checkpoint_final.pth')
+    parser.add_argument('-chk', type=str, required=False, default='checkpoint_final.safetensors',
+                        help='Name of the checkpoint you want to use. Default: checkpoint_final.safetensors. If it '
+                             'does not exist, the same name with .pth is used (models trained with older nnU-Net '
+                             'versions have .pth checkpoints), and vice versa.')
     parser.add_argument('-npp', type=int, required=False, default=_getDefaultValue('nnUNet_npp', int, 3),
                         help='Number of processes used for preprocessing. More is not always better. Beware of '
                              'out-of-RAM issues. Default: 3')
@@ -1076,7 +1102,7 @@ if __name__ == '__main__':
     predictor.initialize_from_trained_model_folder(
         join(nnUNet_results, 'Dataset004_Hippocampus/nnUNetTrainer_5epochs__nnUNetPlans__3d_fullres'),
         use_folds=(0,),
-        checkpoint_name='checkpoint_final.pth',
+        checkpoint_name='checkpoint_final.safetensors',
     )
     # predictor.predict_from_files(join(nnUNet_raw, 'Dataset003_Liver/imagesTs'),
     #                              join(nnUNet_raw, 'Dataset003_Liver/imagesTs_predlowres'),

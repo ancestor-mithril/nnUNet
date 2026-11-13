@@ -1,11 +1,17 @@
 import os
+import sys
 import warnings
+from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Union, Tuple, List
 
 import numpy as np
 import torch
 from batchgenerators.dataloading.data_loader import DataLoader
 from batchgenerators.utilities.file_and_folder_operations import join, load_json
+try:
+    from threadpoolctl import ThreadpoolController
+except ImportError:  # threadpoolctl < 3.0
+    ThreadpoolController = None
 from threadpoolctl import threadpool_limits
 
 from nnunetv2.paths import nnUNet_preprocessed
@@ -14,6 +20,69 @@ from nnunetv2.training.dataloading.nnunet_dataset import nnUNetDatasetBlosc2
 from nnunetv2.utilities.label_handling.label_handling import LabelManager
 from nnunetv2.utilities.plans_handling.plans_handler import PlansManager
 from acvl_utils.cropping_and_padding.bounding_boxes import crop_and_pad_nd
+
+
+def _writeable(arr: np.ndarray) -> np.ndarray:
+    """
+    The data augmentation writes into the patches in place. A crop that lies inside a case is a view of the case,
+    and for unpacked .npy data that is a read-only memory-mapped file: writing into it crashes the dataloader worker.
+    Only those crops are copied. blosc2 crops and padded crops are new arrays already.
+    """
+    return arr if arr.flags.writeable else arr.copy()
+
+
+# threadpool_limits() builds a new controller on every call, and that scans all shared libraries loaded in the process
+# (~7 ms per call with torch loaded). The dataloader enters the limit once per batch, so it keeps one controller per
+# process instead and only builds a new one when modules were imported since, which may have loaded new thread pools.
+# Module globals rather than DataLoader attributes, so that the dataloader stays picklable for its worker processes.
+_threadpool_controller = None
+_threadpool_controller_nmodules = -1
+
+
+def _single_threaded_math_libraries():
+    """Same as threadpool_limits(limits=1, user_api=None), without rescanning the loaded libraries each time"""
+    global _threadpool_controller, _threadpool_controller_nmodules
+    if ThreadpoolController is None:
+        return threadpool_limits(limits=1, user_api=None)
+    if _threadpool_controller is None or len(sys.modules) != _threadpool_controller_nmodules:
+        _threadpool_controller = ThreadpoolController()
+        _threadpool_controller_nmodules = len(sys.modules)
+    return _threadpool_controller.limit(limits=1, user_api=None)
+
+
+# The segmentation crop of a sample runs in a second thread while the data crop runs in the dataloader's own thread.
+# blosc2 (python-blosc2 releases with GIL-free slice reads) and numpy (copies of memory-mapped .npy files) both release
+# the GIL while they read, so the two reads overlap; on network file systems that hides most of the segmentation's
+# read time. With a blosc2 that holds the GIL the reads simply take turns, as before. One thread per process, kept in
+# module globals so that the dataloader stays picklable; a forked worker makes its own.
+_seg_crop_executor = None
+_seg_crop_executor_pid = None
+
+
+def _seg_crop_executor_for_this_process() -> ThreadPoolExecutor:
+    global _seg_crop_executor, _seg_crop_executor_pid
+    if _seg_crop_executor is None or _seg_crop_executor_pid != os.getpid():
+        _seg_crop_executor = ThreadPoolExecutor(1, thread_name_prefix='nnUNet_seg_crop')
+        _seg_crop_executor_pid = os.getpid()
+    return _seg_crop_executor
+
+
+def _crop_segs(seg, seg_prev, bbox):
+    """Crops (int16 numpy arrays) of the segmentation and of the previous stage's segmentation (or None)"""
+    seg_cropped = _writeable(crop_and_pad_nd(seg, bbox, -1, cast_cropped_to=np.int16))
+    if seg_prev is None:
+        return seg_cropped, None
+    return seg_cropped, _writeable(crop_and_pad_nd(seg_prev, bbox, -1, cast_cropped_to=np.int16))
+
+
+def _crop_segs_async(seg, seg_prev, bbox) -> Future:
+    """_crop_segs in the seg crop thread. Inputs that are torch tensors are cropped right here instead: torch's
+    OpenMP thread limit is per thread, so the limit the dataloader sets would not hold in the seg crop thread."""
+    if isinstance(seg, torch.Tensor) or isinstance(seg_prev, torch.Tensor):
+        done = Future()
+        done.set_result(_crop_segs(seg, seg_prev, bbox))
+        return done
+    return _seg_crop_executor_for_this_process().submit(_crop_segs, seg, seg_prev, bbox)
 
 
 class nnUNetDataLoader(DataLoader):
@@ -59,7 +128,7 @@ class nnUNetDataLoader(DataLoader):
         self.num_channels = None
         self.pad_sides = pad_sides
         self.sampling_probabilities = sampling_probabilities
-        self.annotated_classes_key = tuple([-1] + label_manager.all_labels)
+        self.annotated_classes_key = label_manager.annotated_classes_key
         self.has_ignore = label_manager.has_ignore_label
         self.get_do_oversample = self._oversample_last_XX_percent if not probabilistic_oversampling \
             else self._probabilistic_oversampling
@@ -75,10 +144,10 @@ class nnUNetDataLoader(DataLoader):
         # print('YEAH BOIIIIII')
         return np.random.uniform() < self.oversample_foreground_percent
 
-    def get_bbox(self, data_shape: np.ndarray, force_fg: bool, class_locations: Union[dict, None],
+    def get_bbox(self, identifier: str, data_shape: np.ndarray, force_fg: bool,
                  overwrite_class: Union[int, Tuple[int, ...]] = None, verbose: bool = False):
-        # in dataloader 2d we need to select the slice prior to this and also modify the class_locations to only have
-        # locations for the given slice
+        # foreground sampling locations are looked up lazily through self._data.foreground_locations: we need at
+        # most a single coordinate here, so there is no point in materializing all of them
         need_to_pad = self.need_to_pad.copy()
         dim = len(data_shape)
 
@@ -99,20 +168,22 @@ class nnUNetDataLoader(DataLoader):
             bbox_lbs = [np.random.randint(lbs[i], ubs[i] + 1) for i in range(dim)]
             # print('I want a random location')
         else:
+            fg_locations = self._data.foreground_locations
             if not force_fg and self.has_ignore:
                 selected_class = self.annotated_classes_key
-                if len(class_locations[selected_class]) == 0:
+                if fg_locations.count(identifier, selected_class) == 0:
                     # no annotated pixels in this case. Not good. But we can hardly skip it here
                     warnings.warn('Warning! No annotated pixels in image!')
                     selected_class = None
             elif force_fg:
-                assert class_locations is not None, 'if force_fg is set class_locations cannot be None'
-                if overwrite_class is not None:
-                    assert overwrite_class in class_locations.keys(), 'desired class ("overwrite_class") does not ' \
-                                                                      'have class_locations (missing key)'
                 # this saves us a np.unique. Preprocessing already did that for all cases. Neat.
-                # class_locations keys can also be tuple
-                eligible_classes_or_regions = [i for i in class_locations.keys() if len(class_locations[i]) > 0]
+                # class keys can also be tuple
+                eligible_classes_or_regions = fg_locations.eligible_classes(identifier)
+                if overwrite_class is not None:
+                    # class_keys is the full key table; eligible_classes_or_regions above already populated
+                    # it on the legacy backend, which only knows the keys of the case it last read
+                    assert overwrite_class in fg_locations.class_keys, \
+                        'desired class ("overwrite_class") does not have sampling locations (missing key)'
 
                 # if we have annotated_classes_key locations and other classes are present, remove the annotated_classes_key from the list
                 # strange formulation needed to circumvent
@@ -137,12 +208,11 @@ class nnUNetDataLoader(DataLoader):
                 raise RuntimeError('lol what!?')
 
             if selected_class is not None:
-                voxels_of_that_class = class_locations[selected_class]
-                selected_voxel = voxels_of_that_class[np.random.choice(len(voxels_of_that_class))]
+                selected_voxel = fg_locations.sample(identifier, selected_class)
                 # selected voxel is center voxel. Subtract half the patch size to get lower bbox voxel.
-                # Make sure it is within the bounds of lb and ub
-                # i + 1 because we have first dimension 0!
-                bbox_lbs = [max(lbs[i], selected_voxel[i + 1] - self.patch_size[i] // 2) for i in range(dim)]
+                # Make sure it is within the bounds of lb and ub, so that foreground patches stay inside the case
+                # just like random ones. The voxel is still in the final patch after clamping
+                bbox_lbs = [max(lbs[i], min(ubs[i], selected_voxel[i] - self.patch_size[i] // 2)) for i in range(dim)]
             else:
                 # If the image does not contain any foreground classes, we fall back to random cropping
                 bbox_lbs = [np.random.randint(lbs[i], ubs[i] + 1) for i in range(dim)]
@@ -158,25 +228,28 @@ class nnUNetDataLoader(DataLoader):
         seg_all = None
 
         with torch.no_grad():
-            with threadpool_limits(limits=1, user_api=None):
+            with _single_threaded_math_libraries():
                 for j, i in enumerate(selected_keys):
                     # oversampling foreground will improve stability of model training, especially if many patches are empty
                     # (Lung for example)
                     force_fg = self.get_do_oversample(j)
 
-                    data, seg, seg_prev, properties = self._data.load_case(i)
+                    data, seg, seg_prev = self._data.load_case(i)
 
                     # If we are doing the cascade then the segmentation from the previous stage will already have been loaded by
                     # self._data.load_case(i) (see nnUNetDataset.load_case)
                     shape = data.shape[1:]
 
-                    bbox_lbs, bbox_ubs = self.get_bbox(shape, force_fg, properties['class_locations'])
+                    bbox_lbs, bbox_ubs = self.get_bbox(i, shape, force_fg)
                     bbox = [[i, j] for i, j in zip(bbox_lbs, bbox_ubs)]
 
-                    data_cropped = torch.from_numpy(crop_and_pad_nd(data, bbox, 0)).float()
-                    seg_cropped = torch.from_numpy(crop_and_pad_nd(seg, bbox, -1, cast_cropped_to=np.int16)).to(torch.int16)
-                    if seg_prev is not None:
-                        seg_prev_cropped = torch.from_numpy(crop_and_pad_nd(seg_prev, bbox, -1, cast_cropped_to=np.int16)).to(torch.int16)
+                    # the segmentation(s) are read in the seg crop thread meanwhile (see _crop_segs_async)
+                    segs_cropped = _crop_segs_async(seg, seg_prev, bbox)
+                    data_cropped = torch.from_numpy(_writeable(crop_and_pad_nd(data, bbox, 0))).float()
+                    seg_cropped, seg_prev_cropped = segs_cropped.result()
+                    seg_cropped = torch.from_numpy(seg_cropped).to(torch.int16)
+                    if seg_prev_cropped is not None:
+                        seg_prev_cropped = torch.from_numpy(seg_prev_cropped).to(torch.int16)
                         seg_cropped = torch.cat((seg_cropped, seg_prev_cropped[None]), dim=0)
 
                     if self.patch_size_was_2d:
@@ -209,7 +282,7 @@ class nnUNetDataLoader(DataLoader):
 
 if __name__ == '__main__':
     folder = join(nnUNet_preprocessed, 'Dataset002_Heart', 'nnUNetPlans_3d_fullres')
-    ds = nnUNetDatasetBlosc2(folder)  # this should not load the properties!
+    ds = nnUNetDatasetBlosc2(folder)  # this does not load the properties (load_case never touches the pkl)
     pm = PlansManager(join(folder, os.pardir, 'nnUNetPlans.json'))
     lm = pm.get_label_manager(load_json(join(folder, os.pardir, 'dataset.json')))
     dl = nnUNetDataLoader(ds, 5, (16, 16, 16), (16, 16, 16), lm,

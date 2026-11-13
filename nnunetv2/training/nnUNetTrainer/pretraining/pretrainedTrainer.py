@@ -13,10 +13,12 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from nnunetv2.training.dataloading.nnunet_dataset import infer_dataset_class
 from nnunetv2.training.lr_scheduler.polylr import PolyLRScheduler
 from nnunetv2.training.nnUNetTrainer.nnUNetTrainer import nnUNetTrainer
-from nnunetv2.utilities.helpers import empty_cache, dummy_context
+from nnunetv2.utilities.checkpoints import NO_OPTIMIZER_STATE_WARNING, load_checkpoint_file
+from nnunetv2.utilities.helpers import empty_cache, dummy_context, set_default_inductor_cache_dir
 from nnunetv2.utilities.get_network_from_plans import get_network_from_plans
 from nnunetv2.utilities.label_handling.label_handling import determine_num_input_channels
 from nnunetv2.utilities.load_weights_utils import *
+from nnunetv2.utilities.plans_handling.plans_handler import ConfigurationManager, PlansManager
 warmup_stages = Literal["warmup_all", "warmup_decoder", "train_all", "train_decoder"]
 
 
@@ -86,12 +88,10 @@ class PretrainedTrainer(nnUNetTrainer):
             #   This plan holds details on how the architecture is supposed to be built.
 
             self.network = self.build_network_architecture(
-                architecture_class_name=self.configuration_manager.network_arch_class_name,
-                arch_init_kwargs=self.configuration_manager.network_arch_init_kwargs,
-                arch_init_kwargs_req_import=self.configuration_manager.network_arch_init_kwargs_req_import,
-                input_patch_size=self.configuration_manager.patch_size,  # Set in plan to pt_recommended_patchsize
-                num_input_channels=self.num_input_channels,
-                num_output_channels=self.label_manager.num_segmentation_heads,
+                self.plans_manager,
+                self.configuration_manager,
+                self.num_input_channels,
+                self.label_manager.num_segmentation_heads,
                 enable_deep_supervision=False,
             ).to(self.device)
 
@@ -122,6 +122,7 @@ class PretrainedTrainer(nnUNetTrainer):
             # compile network for free speedup
             if self._do_i_compile():
                 self.print_to_log_file("Using torch.compile...")
+                set_default_inductor_cache_dir()
                 self.network = torch.compile(self.network)
 
             self.optimizer, self.lr_scheduler = self.configure_optimizers()
@@ -343,14 +344,11 @@ class PretrainedTrainer(nnUNetTrainer):
 
     @staticmethod
     def build_network_architecture(
-        architecture_class_name: str,
-        arch_init_kwargs: dict,
-        arch_init_kwargs_req_import: Union[List[str], Tuple[str, ...]],
-        input_patch_size: tuple[int, int, int],
+        plans_manager: PlansManager,
+        configuration_manager: ConfigurationManager,
         num_input_channels: int,
         num_output_channels: int,
         enable_deep_supervision: bool = True,
-        **kwargs,
     ) -> AbstractDynamicNetworkArchitectures:
         """
         This is where you build the architecture according to the plans. There is no obligation to use
@@ -371,13 +369,14 @@ class PretrainedTrainer(nnUNetTrainer):
         should be generated. label_manager takes care of all that for you.)
 
         """
+        architecture_class_name = configuration_manager.network_arch_class_name
         if architecture_class_name in ["PlainConvUNet", "ResidualEncoderUNet"] or architecture_class_name.endswith(
             ("PlainConvUNet", "ResidualEncoderUNet")
         ):
             network = get_network_from_plans(
                 architecture_class_name,
-                arch_init_kwargs,
-                arch_init_kwargs_req_import,
+                configuration_manager.network_arch_init_kwargs,
+                configuration_manager.network_arch_init_kwargs_req_import,
                 num_input_channels,
                 num_output_channels,
                 allow_init=True,
@@ -388,7 +387,8 @@ class PretrainedTrainer(nnUNetTrainer):
                 architecture_class_name,
                 input_channels=num_input_channels,
                 output_channels=num_output_channels,
-                input_patchsize=input_patch_size,
+                # nnUNetv2_preprocess_like_nnssl sets the plan's patch size to the pretraining's recommendation
+                input_patchsize=configuration_manager.patch_size,
                 allow_init=True,
                 deep_supervision=False,
             )
@@ -464,9 +464,9 @@ class PretrainedTrainer(nnUNetTrainer):
             self.initialize()
         self.network.cpu()  # stupid but avoids vram peak
         if isinstance(filename_or_checkpoint, str):
-            checkpoint = torch.load(
-                filename_or_checkpoint, map_location="cpu", weights_only=False
-            )  # will be changed soon
+            checkpoint = load_checkpoint_file(filename_or_checkpoint, map_location="cpu")
+        else:
+            checkpoint = filename_or_checkpoint
         # if state dict comes from nn.DataParallel but we use non-parallel model here then the state dict keys do not
         # match. Use heuristic to make it match
         new_state_dict = {}
@@ -500,16 +500,20 @@ class PretrainedTrainer(nnUNetTrainer):
 
         self.optimizer, self.lr_scheduler = self.configure_optimizers(self.get_stage())
 
-        # NEW: ensure optimizer tensors are on CPU before loading
-        opt_state = checkpoint["optimizer_state"]
-        for st in opt_state.get("state", {}).values():
-            for k, v in list(st.items()):
-                if torch.is_tensor(v):
-                    st[k] = v.cpu()
+        if "optimizer_state" in checkpoint:  # checkpoint_final has none
+            # NEW: ensure optimizer tensors are on CPU before loading
+            opt_state = checkpoint["optimizer_state"]
+            for st in opt_state.get("state", {}).values():
+                for k, v in list(st.items()):
+                    if torch.is_tensor(v):
+                        st[k] = v.cpu()
 
-        self.optimizer.load_state_dict(checkpoint["optimizer_state"])
+            self.optimizer.load_state_dict(checkpoint["optimizer_state"])
+        elif self.current_epoch < self.num_epochs:
+            # only matters if training continues from it
+            self.print_to_log_file(NO_OPTIMIZER_STATE_WARNING)
         if self.grad_scaler is not None:
-            if checkpoint["grad_scaler_state"] is not None:
+            if checkpoint.get("grad_scaler_state") is not None:
                 self.grad_scaler.load_state_dict(checkpoint["grad_scaler_state"])
 
         # NEW: move model to GPU after loading everything on CPU

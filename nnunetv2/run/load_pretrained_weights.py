@@ -3,6 +3,9 @@ from torch._dynamo import OptimizedModule
 from torch.nn.parallel import DistributedDataParallel as DDP
 import torch.distributed as dist
 
+from nnunetv2.utilities.checkpoints import load_network_weights
+from nnunetv2.utilities.ddp import get_ddp_topology
+
 
 def load_pretrained_weights(network, fname, verbose=False):
     """
@@ -17,10 +20,14 @@ def load_pretrained_weights(network, fname, verbose=False):
 
     """
     if dist.is_initialized():
-        saved_model = torch.load(fname, map_location=torch.device('cuda', dist.get_rank()), weights_only=False)
+        # the CUDA device index is the LOCAL rank. Using the global rank works on a single node by coincidence and
+        # asks for cuda:5 on a four GPU node as soon as there is a second one.
+        map_location = torch.device('cuda', get_ddp_topology().local_rank)
     else:
-        saved_model = torch.load(fname, weights_only=False)
-    pretrained_dict = saved_model['network_weights']
+        map_location = None
+    # an nnU-Net checkpoint in either format (checkpoint_final.pth also finds checkpoint_final.safetensors and vice
+    # versa), or a safetensors file that holds just a state dict
+    pretrained_dict = load_network_weights(fname, map_location=map_location)
 
     skip_strings_in_pretrained = [
         '.seg_layers.',
@@ -42,7 +49,7 @@ def load_pretrained_weights(network, fname, verbose=False):
                 f"compatible with your network."
             assert model_dict[key].shape == pretrained_dict[key].shape, \
                 f"The shape of the parameters of key {key} is not the same. Pretrained model: " \
-                f"{pretrained_dict[key].shape}; your network: {model_dict[key]}. The pretrained model " \
+                f"{pretrained_dict[key].shape}; your network: {model_dict[key].shape}. The pretrained model " \
                 f"does not seem to be compatible with your network."
 
     # fun fact: in principle this allows loading from parameters that do not cover the entire network. For example pretrained

@@ -67,11 +67,13 @@ CUDA_VISIBLE_DEVICES=0 nnUNetv2_train DATASET_NAME_OR_ID 2d 0 --npz
 CUDA_VISIBLE_DEVICES=1 nnUNetv2_train DATASET_NAME_OR_ID 2d 1 --npz
 ```
 
-Distributed training is also available:
+Distributed training (DDP) is also available. For a single node, use `-num_gpus`:
 
 ```bash
 nnUNetv2_train DATASET_NAME_OR_ID 2d 0 --npz -num_gpus X
 ```
+
+For multi-node training, or to use PyTorch's standard launcher, run via `torchrun` (do not pass `-num_gpus` in that case). See [Multi-GPU training](../multi_gpu_training.md) for the full guide covering both options.
 
 ## Output location
 
@@ -83,11 +85,13 @@ nnUNet_results/DatasetXXX_Name/TRAINER__PLANS__CONFIGURATION/fold_X
 
 Important artifacts include:
 
-- `checkpoint_final.pth`
-- `checkpoint_best.pth`
+- `checkpoint_final.safetensors`
+- `checkpoint_best.safetensors`
 - `progress.png`
 - `validation/summary.json`
 - `validation/*.npz` if `--npz` was enabled
+
+Models trained with older nnU-Net versions have `.pth` checkpoints instead; they are still read everywhere.
 
 ## Next steps
 

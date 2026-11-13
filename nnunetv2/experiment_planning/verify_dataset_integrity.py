@@ -58,6 +58,13 @@ def check_cases(image_files: List[str], label_file: str, expected_num_channels: 
         print(f'Segmentation contains NaN pixel values. You need to fix that.\nSegmentation:\n{label_file}')
         ret = False
 
+    # check segmentation is single-channel
+    if segmentation.shape[0] != 1:
+        print('Error: Segmentation must be a single-channel integer label map but has %d channels. '
+              'Please re-save your label file as a single-channel image with integer class indices '
+              '(0, 1, 2, ...). \nSeg file: %s\n' % (segmentation.shape[0], label_file))
+        ret = False
+
     # check shapes
     shape_image = images.shape[1:]
     shape_seg = segmentation.shape[1:]
@@ -70,7 +77,14 @@ def check_cases(image_files: List[str], label_file: str, expected_num_channels: 
     # check spacings
     spacing_images = properties_image['spacing']
     spacing_seg = properties_seg['spacing']
-    if not np.allclose(spacing_seg, spacing_images):
+    if len(spacing_seg) != len(spacing_images):
+        print('Error: Image and segmentation have different spacing dimensions. '
+              '\nSpacing images: %s. \nSpacing seg: %s. \nImage files: %s. \nSeg file: %s\n'
+              'A multi-component or layered segmentation may cause this. Export a scalar labelmap with '
+              'the same spatial geometry as the image before preprocessing.\n' %
+              (spacing_images, spacing_seg, image_files, label_file))
+        ret = False
+    elif not np.allclose(spacing_seg, spacing_images):
         print('Error: Spacing mismatch between segmentation and corresponding images. \nSpacing images: %s. '
               '\nSpacing seg: %s. \nImage files: %s. \nSeg file: %s\n' %
               (spacing_images, spacing_seg, image_files, label_file))
@@ -102,7 +116,12 @@ def check_cases(image_files: List[str], label_file: str, expected_num_channels: 
         # spacing has already been checked, only check direction and origin
         origin_image = properties_image['sitk_stuff']['origin']
         origin_seg = properties_seg['sitk_stuff']['origin']
-        if not np.allclose(origin_image, origin_seg):
+        if len(origin_image) != len(origin_seg):
+            print('Error: Image and segmentation have different origin dimensions. '
+                  '\nOrigin images: %s. \nOrigin seg: %s. \nImage files: %s. \nSeg file: %s\n' %
+                  (origin_image, origin_seg, image_files, label_file))
+            ret = False
+        elif not np.allclose(origin_image, origin_seg):
             print('Warning: Origin mismatch between segmentation and corresponding images. '
                 '\nOrigin images: %s. \nOrigin seg: %s. \nImage files: %s. \nSeg file: %s\n'
                 'This is a warning only and will not cause a crash. Please verify that your '
@@ -111,7 +130,12 @@ def check_cases(image_files: List[str], label_file: str, expected_num_channels: 
                 % (origin_image, origin_seg, image_files, label_file))
         direction_image = properties_image['sitk_stuff']['direction']
         direction_seg = properties_seg['sitk_stuff']['direction']
-        if not np.allclose(direction_image, direction_seg):
+        if len(direction_image) != len(direction_seg):
+            print('Error: Image and segmentation have different direction dimensions. '
+                  '\nDirection images: %s. \nDirection seg: %s. \nImage files: %s. \nSeg file: %s\n' %
+                  (direction_image, direction_seg, image_files, label_file))
+            ret = False
+        elif not np.allclose(direction_image, direction_seg):
             print('Warning: Direction mismatch between segmentation and corresponding images. '
                 '\nDirection images: %s. \nDirection seg: %s. \nImage files: %s. \nSeg file: %s\n'
                 'This is a warning only and will not cause a crash. Please verify that your '

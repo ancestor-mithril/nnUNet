@@ -8,6 +8,14 @@ from nnunetv2.preprocessing.resampling.resample_torch import resample_torch_forn
 
 
 class nnUNetPlannerResEncL_torchres(nnUNetPlannerResEncL):
+    """
+    ResEnc L planner that resamples with torch (resample_torch_fornnunet) and never treats the low resolution axis of
+    anisotropic data separately (force_separate_z=False): all three axes are interpolated together.
+
+    If you want torch resampling, use nnUNetPlannerResEncL_torchres_sepz instead. It handles anisotropic data like the
+    default planners do, was never clearly worse than this planner in our comparison on nine datasets (better on
+    KiTS), and is faster on anisotropic segmentations. This planner is kept so that existing plans stay reproducible.
+    """
     def __init__(self, dataset_name_or_id: Union[str, int],
                  gpu_memory_target_in_gb: float = 24,
                  preprocessor_name: str = 'DefaultPreprocessor', plans_name: str = 'nnUNetResEncUNetLPlans_torchres',
@@ -36,13 +44,13 @@ class nnUNetPlannerResEncL_torchres(nnUNetPlannerResEncL):
         resampling_data_kwargs = {
             "is_seg": False,
             'force_separate_z': False,
-            'memefficient_seg_resampling': False
+            'memefficient_seg_resampling': True
         }
         resampling_seg = resample_torch_fornnunet
         resampling_seg_kwargs = {
             "is_seg": True,
             'force_separate_z': False,
-            'memefficient_seg_resampling': False
+            'memefficient_seg_resampling': True
         }
         return resampling_data, resampling_data_kwargs, resampling_seg, resampling_seg_kwargs
 
@@ -59,12 +67,17 @@ class nnUNetPlannerResEncL_torchres(nnUNetPlannerResEncL):
         resampling_fn_kwargs = {
             "is_seg": False,
             'force_separate_z': False,
-            'memefficient_seg_resampling': False
+            'memefficient_seg_resampling': True
         }
         return resampling_fn, resampling_fn_kwargs
 
 
 class nnUNetPlannerResEncL_torchres_sepz(nnUNetPlannerResEncL):
+    """
+    The recommended planner for resampling with torch (resample_torch_fornnunet). Like the default planners, it
+    resamples anisotropic cases (spacing ratio above ANISO_THRESHOLD) in plane and uses nearest neighbour along the low
+    resolution axis (force_separate_z=None). See nnUNetPlannerResEncL_torchres for why this is preferred.
+    """
     def __init__(self, dataset_name_or_id: Union[str, int],
                  gpu_memory_target_in_gb: float = 24,
                  preprocessor_name: str = 'DefaultPreprocessor', plans_name: str = 'nnUNetResEncUNetLPlans_torchres_sepz',
@@ -93,14 +106,14 @@ class nnUNetPlannerResEncL_torchres_sepz(nnUNetPlannerResEncL):
         resampling_data_kwargs = {
             "is_seg": False,
             'force_separate_z': None,
-            'memefficient_seg_resampling': False,
+            'memefficient_seg_resampling': True,
             'separate_z_anisotropy_threshold': ANISO_THRESHOLD
         }
         resampling_seg = resample_torch_fornnunet
         resampling_seg_kwargs = {
             "is_seg": True,
             'force_separate_z': None,
-            'memefficient_seg_resampling': False,
+            'memefficient_seg_resampling': True,
             'separate_z_anisotropy_threshold': ANISO_THRESHOLD
         }
         return resampling_data, resampling_data_kwargs, resampling_seg, resampling_seg_kwargs
@@ -118,13 +131,18 @@ class nnUNetPlannerResEncL_torchres_sepz(nnUNetPlannerResEncL):
         resampling_fn_kwargs = {
             "is_seg": False,
             'force_separate_z': None,
-            'memefficient_seg_resampling': False,
+            'memefficient_seg_resampling': True,
             'separate_z_anisotropy_threshold': ANISO_THRESHOLD
         }
         return resampling_fn, resampling_fn_kwargs
 
 
 class nnUNetPlanner_torchres(ExperimentPlanner):
+    """
+    Default (non-ResEnc) planner that resamples with torch and never treats the low resolution axis of anisotropic
+    data separately (force_separate_z=False). For torch resampling we recommend nnUNetPlannerResEncL_torchres_sepz
+    (see nnUNetPlannerResEncL_torchres).
+    """
     def __init__(self, dataset_name_or_id: Union[str, int],
                  gpu_memory_target_in_gb: float = 8,
                  preprocessor_name: str = 'DefaultPreprocessor', plans_name: str = 'nnUNetPlans_torchres',
@@ -153,13 +171,13 @@ class nnUNetPlanner_torchres(ExperimentPlanner):
         resampling_data_kwargs = {
             "is_seg": False,
             'force_separate_z': False,
-            'memefficient_seg_resampling': False
+            'memefficient_seg_resampling': True
         }
         resampling_seg = resample_torch_fornnunet
         resampling_seg_kwargs = {
             "is_seg": True,
             'force_separate_z': False,
-            'memefficient_seg_resampling': False
+            'memefficient_seg_resampling': True
         }
         return resampling_data, resampling_data_kwargs, resampling_seg, resampling_seg_kwargs
 
@@ -176,6 +194,6 @@ class nnUNetPlanner_torchres(ExperimentPlanner):
         resampling_fn_kwargs = {
             "is_seg": False,
             'force_separate_z': False,
-            'memefficient_seg_resampling': False
+            'memefficient_seg_resampling': True
         }
         return resampling_fn, resampling_fn_kwargs
