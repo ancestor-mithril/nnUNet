@@ -115,6 +115,13 @@ class nnUNetTrainerMuon_250(nnUNetTrainerMuon):
         self.num_epochs = 250
 
 
+class nnUNetTrainerMuon_100(nnUNetTrainerMuon):
+    def __init__(self, plans: dict, configuration: str, fold: int, dataset_json: dict,
+                 device: torch.device = torch.device('cuda')):
+        super().__init__(plans, configuration, fold, dataset_json, device)
+        self.num_epochs = 100
+
+
 class nnUNetTrainerMuonNesterov(nnUNetTrainerAdam):
     def configure_optimizers(self):
         from timm.optim.muon import Muon
