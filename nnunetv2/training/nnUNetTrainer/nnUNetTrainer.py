@@ -1429,7 +1429,7 @@ class nnUNetTrainer(object):
         self.network.eval()
         import torch_tensorrt
 
-        os.setenv["BATCHED_MIRROR"] = "0"
+        os.environ["BATCHED_MIRROR"] = "0"
 
         num_input_channels = self.num_input_channels
         bs = 1
