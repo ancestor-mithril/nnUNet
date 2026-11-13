@@ -1427,6 +1427,7 @@ class nnUNetTrainer(object):
 
         self.set_deep_supervision_enabled(False)
         self.network.eval()
+        self.network = self.network.to(device=self.device, dtype=torch.float16)
         import torch_tensorrt
 
         os.environ["BATCHED_MIRROR"] = "0"
@@ -1440,20 +1441,30 @@ class nnUNetTrainer(object):
         inputs = [
             torch_tensorrt.Input(shape=input_shape, dtype=dtype)
         ]
-        network = torch_tensorrt.compile(
+        print("PyTorch:", torch.__version__)
+        print("Torch-TensorRT:", torch_tensorrt.__version__)
+
+        print("network type", type(network))
+        example_inputs = [
+            torch.randn(
+                input_shape,
+                dtype=dtype,
+                device=self.device,
+            )
+        ]
+        exported_program = torch.export.export(
             network,
-            inputs=inputs,
+            tuple(example_inputs),
+        )
+        perf_logger.info("Exported PyTorch")
+        torch_tensorrt.compile_and_save(
+            exported_program,
+            compiled_path,
+            arg_inputs=example_inputs,
             enabled_precisions={dtype},
             optimization_level=5,
             require_full_compilation=True,
             immutable_weights=True,
-            ir="dynamo",
-        )
-        perf_logger.info("Compile done")
-        torch_tensorrt.save(
-            network,
-            compiled_path,
-            arg_inputs=inputs,
         )
         perf_logger.info("Saved compiled model")
 
@@ -1506,7 +1517,7 @@ class nnUNetTrainer(object):
             n = len(dataset_val.identifiers)
             for i, k in tqdm(list(enumerate(dataset_val.identifiers)), desc=f"Validation for {step_size}"):
                 self.print_to_log_file(f"predicting {i}/{n}: {k}")
-                data, _, seg_prev, properties = dataset_val.load_case(k)
+                data, seg_prev, properties = dataset_val.load_case(k)
 
                 # we do [:] to convert blosc2 to numpy
                 data = data[:]
@@ -1546,7 +1557,7 @@ class nnUNetTrainer(object):
                         try:
                             # we do this so that we can use load_case and do not have to hard code how loading training cases is implemented
                             tmp = dataset_class(expected_preprocessed_folder, [k])
-                            d, _, _, _ = tmp.load_case(k)
+                            d, _, _ = tmp.load_case(k)
                         except FileNotFoundError:
                             self.print_to_log_file(
                                 f"Predicting next stage {n} failed for case {k} because the preprocessed file is missing! "
