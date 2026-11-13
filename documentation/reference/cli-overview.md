@@ -1,0 +1,78 @@
+# CLI Overview
+
+This page groups the main nnU-Net v2 command-line entry points by workflow stage.
+
+## Dataset preparation
+
+- `nnUNetv2_convert_old_nnUNet_dataset`: convert nnU-Net v1 datasets
+- `nnUNetv2_convert_MSD_dataset`: convert Medical Segmentation Decathlon datasets
+
+## Planning and preprocessing
+
+- `nnUNetv2_plan_and_preprocess`: run fingerprinting, planning, and preprocessing in one step
+- `nnUNetv2_extract_fingerprint`: fingerprint only
+- `nnUNetv2_plan_experiment`: planning only
+- `nnUNetv2_preprocess`: preprocessing only
+- `nnUNetv2_extract_sampling_locations`: (re)build the foreground sampling location store for already preprocessed datasets. Run automatically by the commands above; useful to migrate datasets preprocessed by an older nnU-Net. See [preprocessed data format](preprocessed-data-format.md)
+
+## Training
+
+- `nnUNetv2_train`: train a configuration and fold
+
+## Finetuning from self-supervised (nnssl) checkpoints
+
+These use their own plans and trainers and leave the standard commands unchanged. See
+[Finetuning from nnssl checkpoints](../finetuning_from_nnssl_checkpoints.md).
+
+- `nnUNetv2_preprocess_like_nnssl`: plan an architecture that matches the checkpoint and preprocess the data like
+  the pre-training (the recommended default)
+- `nnUNetv2_plan_like_dynamic`: keep an existing plan (e.g. a ResEnc preset) and add the checkpoint to it;
+  architecture mismatches are reconciled when the weights are loaded
+- `nnUNetv2_train_pretrained`: train from one of these plans, starting from the pre-trained weights
+
+## Inference
+
+- `nnUNetv2_predict`: run prediction using dataset id and stored results
+- `nnUNetv2_predict_from_modelfolder`: run prediction from an explicit model folder
+- `nnUNetv2_ensemble`: ensemble multiple prediction folders
+- `nnUNetv2_apply_postprocessing`: apply postprocessing to prediction outputs
+
+## Evaluation and model selection
+
+- `nnUNetv2_find_best_configuration`: compare configurations and determine postprocessing
+- `nnUNetv2_accumulate_crossval_results`: aggregate cross-validation results
+- `nnUNetv2_determine_postprocessing`: determine postprocessing separately
+- `nnUNetv2_evaluate_folder`: evaluate a prediction folder
+- `nnUNetv2_evaluate_simple`: simpler evaluation entry point
+
+## Model packaging and sharing
+
+- `nnUNetv2_export_model_to_zip`: export a trained model bundle
+- `nnUNetv2_install_pretrained_model_from_zip`: install a model bundle from zip
+- `nnUNetv2_download_pretrained_model_by_url`: install a model bundle from a URL
+
+## Utilities
+
+- `nnUNetv2_move_plans_between_datasets`: reuse plans across datasets
+- `nnUNetv2_plot_overlay_pngs`: create overlay PNGs for visualization
+- `nnUNetv2_convert_checkpoints_to_safetensors`: convert the `.pth` checkpoints of models trained with older
+  nnU-Net versions to `.safetensors`. See [Run inference](../how-to/run-inference.md#checkpoints-safetensors-and-pth)
+
+## Help and discovery
+
+All commands support `-h`:
+
+```bash
+nnUNetv2_train -h
+nnUNetv2_predict -h
+nnUNetv2_plan_and_preprocess -h
+```
+
+## Recommended starting path
+
+If you are new to nnU-Net, do not start from this page. Start with:
+
+- [Installation and setup](../getting-started/installation-and-setup.md)
+- [Prepare a dataset](../how-to/prepare-a-dataset.md)
+- [Plan and preprocess](../how-to/plan-and-preprocess.md)
+- [Train models](../how-to/train-models.md)

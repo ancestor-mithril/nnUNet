@@ -1,19 +1,57 @@
+import inspect
 import multiprocessing
 import os
 import socket
-from typing import Union, Optional
+from dataclasses import dataclass
+from functools import partial
+from typing import Callable, Optional, Union
 
-import nnunetv2
 import torch.cuda
 import torch.distributed as dist
 import torch.multiprocessing as mp
-from batchgenerators.utilities.file_and_folder_operations import join, isfile, load_json
+from batchgenerators.utilities.file_and_folder_operations import join, load_json
 from nnunetv2.paths import nnUNet_preprocessed
 from nnunetv2.run.load_pretrained_weights import load_pretrained_weights
 from nnunetv2.training.nnUNetTrainer.nnUNetTrainer import nnUNetTrainer
+from nnunetv2.utilities.checkpoints import CHECKPOINT_EXTENSION, find_checkpoint_file, read_checkpoint_metadata, \
+    resolve_checkpoint_file
 from nnunetv2.utilities.dataset_name_id_conversion import maybe_convert_to_dataset_name
-from nnunetv2.utilities.find_class_by_name import recursive_find_python_class
+from nnunetv2.utilities.find_objects import recursive_find_trainer_class_by_name
 from torch.backends import cudnn
+import torch
+
+
+def launched_by_external_launcher() -> bool:
+    """
+    Did something outside nnU-Net already lay out the distributed environment for us? That is the case for
+    `torchrun` (our supported multi-node path) and for anything else that speaks the same env var protocol,
+    e.g. srun or deepspeed. In that case the launcher owns the process/GPU assignment and `-num_gpus` must not
+    be used; nnUNetv2_train just joins the process group that was described to it.
+
+    TORCHELASTIC_RUN_ID is set by torchrun and by nothing else. We additionally accept a complete RANK +
+    WORLD_SIZE + LOCAL_RANK triple, but we insist on all three: a stale RANK left over in someone's shell must
+    not silently turn `-num_gpus 4` into a single process job.
+    """
+    if 'TORCHELASTIC_RUN_ID' in os.environ:
+        return True
+    return all(k in os.environ for k in ('RANK', 'WORLD_SIZE', 'LOCAL_RANK'))
+
+
+_INIT_PROCESS_GROUP_SUPPORTS_DEVICE_ID = 'device_id' in inspect.signature(dist.init_process_group).parameters
+
+
+def init_ddp_process_group(device: torch.device, **kwargs) -> None:
+    """
+    init_process_group, telling it which device this rank owns where the installed torch supports it.
+
+    `device_id` makes NCCL form the communicator immediately instead of on the first collective, so a broken
+    interconnect fails at startup rather than as a hang minutes later, and it gives c10d an explicit rank ->
+    device mapping instead of one it has to infer (it also lets sub-groups use ncclCommSplit). It was added in
+    torch 2.3 and we support torch >= 2.1.2, hence the check.
+    """
+    if _INIT_PROCESS_GROUP_SUPPORTS_DEVICE_ID:
+        kwargs['device_id'] = device
+    dist.init_process_group(**kwargs)
 
 
 def find_free_network_port() -> int:
@@ -37,15 +75,7 @@ def get_trainer_from_args(dataset_name_or_id: Union[int, str],
                           continue_training: bool = False,
                           device: torch.device = torch.device('cuda')):
     # load nnunet class and do sanity checks
-    nnunet_trainer = recursive_find_python_class(join(nnunetv2.__path__[0], "training", "nnUNetTrainer"),
-                                                 trainer_name, 'nnunetv2.training.nnUNetTrainer')
-    if nnunet_trainer is None:
-        raise RuntimeError(f'Could not find requested nnunet trainer {trainer_name} in '
-                           f'nnunetv2.training.nnUNetTrainer ('
-                           f'{join(nnunetv2.__path__[0], "training", "nnUNetTrainer")}). If it is located somewhere '
-                           f'else, please move it there.')
-    assert issubclass(nnunet_trainer, nnUNetTrainer), 'The requested nnunet trainer class must inherit from ' \
-                                                      'nnUNetTrainer'
+    nnunet_trainer = recursive_find_trainer_class_by_name(trainer_name)
 
     # handle dataset input. If it's an ID we need to convert to int from string
     if dataset_name_or_id.startswith('Dataset'):
@@ -69,26 +99,66 @@ def get_trainer_from_args(dataset_name_or_id: Union[int, str],
     return nnunet_trainer
 
 
-def maybe_load_checkpoint(nnunet_trainer: nnUNetTrainer, continue_training: bool, validation_only: bool,
-                          save_trt:bool, pretrained_weights_file: str = None):
+def _stored_epoch(checkpoint_file: str) -> Optional[int]:
+    """
+    The current_epoch stored in a checkpoint (the number of finished epochs), read without loading its tensors.
+    None if the file does not tell, for example because a custom trainer writes checkpoints of its own.
+    """
+    try:
+        if checkpoint_file.endswith(CHECKPOINT_EXTENSION):
+            epoch = read_checkpoint_metadata(checkpoint_file).get('current_epoch')
+        else:
+            # mmap: the tensors are mapped, not read. Loading a .pth runs code, but this is the file we will load anyway
+            epoch = torch.load(checkpoint_file, map_location='cpu', weights_only=False, mmap=True).get('current_epoch')
+        return None if epoch is None else int(epoch)
+    except Exception:
+        return None
+
+
+def _checkpoint_to_continue_from(output_folder: str) -> Optional[str]:
+    """
+    checkpoint_final if the training has finished (--c then runs the validation if it is missing). Otherwise the newer
+    of checkpoint_latest and checkpoint_best. checkpoint_latest is only written every save_every epochs,
+    checkpoint_best whenever the EMA pseudo Dice improves, so after a crash checkpoint_best is often newer, and both
+    hold the full training state. Newer means more finished epochs, not a later modification time, which copying
+    changes. A tie, or a checkpoint that does not tell its epoch, goes to checkpoint_latest.
+    find_checkpoint_file also finds the .pth checkpoints of trainings started with an older nnU-Net.
+    """
+    final = find_checkpoint_file(join(output_folder, 'checkpoint_final.safetensors'))
+    if final is not None:
+        return final
+    latest = find_checkpoint_file(join(output_folder, 'checkpoint_latest.safetensors'))
+    best = find_checkpoint_file(join(output_folder, 'checkpoint_best.safetensors'))
+    if latest is None or best is None:
+        return best if latest is None else latest
+    latest_epoch, best_epoch = _stored_epoch(latest), _stored_epoch(best)
+    if latest_epoch is not None and best_epoch is not None and best_epoch > latest_epoch:
+        print(f"Continuing from {os.path.basename(best)} ({best_epoch} epochs) because it is newer than "
+              f"{os.path.basename(latest)} ({latest_epoch} epochs).")
+        return best
+    return latest
+
+
+def maybe_load_checkpoint(nnunet_trainer: nnUNetTrainer, continue_training: bool, validation_only: bool, save_trt:bool,
+                          pretrained_weights_file: str = None, validation_with_best: bool = False):
     if continue_training and pretrained_weights_file is not None:
         raise RuntimeError('Cannot both continue a training AND load pretrained weights. Pretrained weights can only '
                            'be used at the beginning of the training.')
+    # find_checkpoint_file also finds the .pth checkpoints of trainings started with an older nnU-Net
     if continue_training:
-        expected_checkpoint_file = join(nnunet_trainer.output_folder, 'checkpoint_final.pth')
-        if not isfile(expected_checkpoint_file):
-            expected_checkpoint_file = join(nnunet_trainer.output_folder, 'checkpoint_latest.pth')
-        # special case where --c is used to run a previously aborted validation
-        if not isfile(expected_checkpoint_file):
-            expected_checkpoint_file = join(nnunet_trainer.output_folder, 'checkpoint_best.pth')
-        if not isfile(expected_checkpoint_file):
-            print(f"WARNING: Cannot continue training because there seems to be no checkpoint available to "
-                  f"continue from. Starting a new training...")
-            expected_checkpoint_file = None
+        expected_checkpoint_file = _checkpoint_to_continue_from(nnunet_trainer.output_folder)
+        if expected_checkpoint_file is None:
+            print("WARNING: Cannot continue training because there seems to be no checkpoint available to "
+                  "continue from. Starting a new training...")
     elif validation_only or save_trt:
-        expected_checkpoint_file = join(nnunet_trainer.output_folder, 'checkpoint_final.pth')
-        if not isfile(expected_checkpoint_file):
-            raise RuntimeError(f"Cannot run validation because the training is not finished yet!")
+        if validation_with_best:
+            expected_checkpoint_file = find_checkpoint_file(join(nnunet_trainer.output_folder,
+                                                                 'checkpoint_best.safetensors'))
+        else:
+            expected_checkpoint_file = find_checkpoint_file(join(nnunet_trainer.output_folder,
+                                                                 'checkpoint_final.safetensors'))
+        if expected_checkpoint_file is None:
+            raise RuntimeError("Cannot run validation because the training is not finished yet!")
     else:
         if pretrained_weights_file is not None:
             if not nnunet_trainer.was_initialized:
@@ -100,46 +170,153 @@ def maybe_load_checkpoint(nnunet_trainer: nnUNetTrainer, continue_training: bool
         nnunet_trainer.load_checkpoint(expected_checkpoint_file)
 
 
-def setup_ddp(rank, world_size):
-    # initialize the process group
-    dist.init_process_group("nccl", rank=rank, world_size=world_size)
+@dataclass
+class TrainingRunOptions:
+    """Everything that steers a training run but is not the trainer itself."""
+    pretrained_weights: Optional[str] = None
+    export_validation_probabilities: bool = False
+    continue_training: bool = False
+    only_run_validation: bool = False
+    save_trt: bool = False
+    step_size_for_val: float = 0.5
+    val_path: str = "validation"
+    disable_checkpointing: bool = False
+    val_with_best: bool = False
 
 
-def cleanup_ddp():
-    dist.destroy_process_group()
+def execute_training(trainer_factory: Callable[[torch.device], nnUNetTrainer], device: torch.device,
+                     options: TrainingRunOptions) -> None:
+    """
+    Build the trainer and run it. Knows nothing about how the process was started - by the time we get here the
+    process group, if there is one, already exists and `device` is ours.
+    """
+    nnunet_trainer = trainer_factory(device)
+    if options.save_trt:
+        os.environ["nnUNet_compile"] = "0"
 
+    if options.disable_checkpointing:
+        nnunet_trainer.disable_checkpointing = options.disable_checkpointing
 
-def run_ddp(rank, dataset_name_or_id, configuration, fold, tr, p, disable_checkpointing, c, val, save_trt,
-            step_size_for_val, val_path, pretrained_weights, npz, val_with_best, world_size):
-    setup_ddp(rank, world_size)
-    torch.cuda.set_device(torch.device('cuda', dist.get_rank()))
+    assert not (options.continue_training and options.only_run_validation), \
+        'Cannot set --c and --val flag at the same time. Dummy.'
+    assert not (options.continue_training and options.save_trt), \
+        'Cannot set --c and --save_trt flag at the same time. Dummy.'
+    assert not (options.only_run_validation and options.save_trt), \
+        'Cannot set --val and --save_trt flag at the same time. Dummy.'
 
-    nnunet_trainer = get_trainer_from_args(dataset_name_or_id, configuration, fold, tr, p, c)
-
-    if disable_checkpointing:
-        nnunet_trainer.disable_checkpointing = disable_checkpointing
-
-    assert not (c and val), f'Cannot set --c and --val flag at the same time. Dummy.'
-    assert not (c and save_trt), f'Cannot set --c and --save_trt flag at the same time. Dummy.'
-    assert not (val and save_trt), f'Cannot set --val and --save_trt flag at the same time. Dummy.'
-
-    maybe_load_checkpoint(nnunet_trainer, c, val, save_trt, pretrained_weights)
+    if os.getenv("EXIT_AFTER_SPLIT", "0") == "0":
+        maybe_load_checkpoint(nnunet_trainer, options.continue_training, options.only_run_validation, options.save_trt,
+                              options.pretrained_weights, options.val_with_best)
 
     if torch.cuda.is_available():
         cudnn.deterministic = False
         cudnn.benchmark = True
 
-    if save_trt:
+    if options.save_trt:
         nnunet_trainer.save_trt()
+        print("Saved compiled model")
+        return
+
+    if not options.only_run_validation:
+        nnunet_trainer.run_training()
+
+    # with --val, maybe_load_checkpoint has already loaded checkpoint_best
+    if options.val_with_best and not options.only_run_validation:
+        if dist.is_initialized():
+            # rank 0 may still be writing checkpoint_best (and checkpoint_final) while the other ranks are already here
+            dist.barrier()
+        # resolved here rather than left to load_checkpoint: custom trainers that override it may call torch.load,
+        # which needs the name of the file that exists (checkpoint_best.pth for trainings from older nnU-Net versions)
+        nnunet_trainer.load_checkpoint(resolve_checkpoint_file(join(nnunet_trainer.output_folder,
+                                                                    'checkpoint_best.safetensors')))
+    if os.getenv("DO_VALIDATION", "0") == "1":
+        nnunet_trainer.perform_actual_validation(
+            options.export_validation_probabilities, options.step_size_for_val, options.val_path)
     else:
-        if not val:
-            nnunet_trainer.run_training()
+        print("Validation not done. To run validation, set the environment: DO_VALIDATION=1")
 
-        if val_with_best:
-            nnunet_trainer.load_checkpoint(join(nnunet_trainer.output_folder, 'checkpoint_best.pth'))
 
-        nnunet_trainer.perform_actual_validation(npz, step_size_for_val, val_path)
-    cleanup_ddp()
+def run_intranode_ddp(rank: int, trainer_factory: Callable[[torch.device], nnUNetTrainer], world_size: int,
+                      options: TrainingRunOptions) -> None:
+    """
+    One worker of a `-num_gpus X` launch. mp.spawn pickles the arguments, so trainer_factory must be picklable:
+    a functools.partial over a module level function is, a lambda or closure is not.
+    """
+    if options.save_trt:
+        raise RuntimeError("Save trt not supported.")
+    # Emulate torchrun environment variables for non-torchrun launches so that everything downstream only ever
+    # has to read these four and never has to care how the job was started. Single node, so local == global.
+    os.environ["RANK"] = str(rank)
+    os.environ["WORLD_SIZE"] = str(world_size)
+    os.environ["LOCAL_RANK"] = str(rank)
+    os.environ["LOCAL_WORLD_SIZE"] = str(world_size)
+
+    device = torch.device('cuda', rank)
+    torch.cuda.set_device(device)
+    init_ddp_process_group(device, backend="nccl", rank=rank, world_size=world_size)
+
+    try:
+        execute_training(trainer_factory, device, options)
+    finally:
+        if dist.is_initialized():
+            dist.destroy_process_group()
+
+
+def launch_training(trainer_factory: Callable[[torch.device], nnUNetTrainer], device: torch.device,
+                    num_gpus: int, options: TrainingRunOptions) -> None:
+    """
+    The single entry point for all three ways a training can be started, shared by nnUNetv2_train and
+    nnUNetv2_train_pretrained:
+
+    - an external launcher (torchrun and anything else speaking its env var protocol) already created the
+      processes; we just join the process group it described. Single or multi node.
+    - `-num_gpus X`: we spawn the workers ourselves. Single node only.
+    - everything else: one plain process.
+    """
+    if options.val_with_best:
+        assert not options.disable_checkpointing, '--val_best is not compatible with --disable_checkpointing'
+
+    external_launcher = launched_by_external_launcher()
+    if external_launcher and options.save_trt:
+        raise RuntimeError("Save trt not supported.")
+
+    if external_launcher or num_gpus == 1:
+        if external_launcher:
+            assert device.type == 'cuda', f"DDP training is only implemented for cuda devices. Your device: {device}"
+            assert num_gpus == 1, ("Your distributed environment was set up by an external launcher (torchrun or "
+                                   "similar), so do not also pass -num_gpus: the launcher, not nnU-Net, decides how "
+                                   "many processes there are and which GPU each one gets. Use -num_gpus only when "
+                                   "starting the training directly.")
+            local_rank = int(os.environ["LOCAL_RANK"])
+            device = torch.device('cuda', local_rank)
+            torch.cuda.set_device(device)
+            init_ddp_process_group(device, backend='nccl', init_method='env://')
+            print(f"Distributed launcher detected. [rank {os.environ.get('RANK', '?')} of "
+                  f"{os.environ.get('WORLD_SIZE', '?')}] using cuda:{local_rank}")
+
+        try:
+            execute_training(trainer_factory, device, options)
+        finally:
+            if dist.is_initialized():
+                dist.destroy_process_group()
+    else:
+        assert device.type == 'cuda', \
+            f"DDP training (triggered by num_gpus > 1) is only implemented for cuda devices. Your device: {device}"
+
+        os.environ['MASTER_ADDR'] = 'localhost'
+        if 'MASTER_PORT' not in os.environ.keys():
+            port = str(find_free_network_port())
+            print(f"using port {port}")
+            os.environ['MASTER_PORT'] = port  # str(port)
+
+        mp.spawn(run_intranode_ddp, args=(trainer_factory, num_gpus, options), nprocs=num_gpus, join=True)
+
+
+def trainer_from_args(dataset_name_or_id, configuration, fold, trainer_name, plans_identifier,
+                      continue_training, device: torch.device) -> nnUNetTrainer:
+    """get_trainer_from_args with device last, so that functools.partial can bind the rest."""
+    return get_trainer_from_args(dataset_name_or_id, configuration, fold, trainer_name, plans_identifier,
+                                 continue_training, device=device)
 
 
 def run_training(dataset_name_or_id: Union[str, int],
@@ -168,76 +345,21 @@ def run_training(dataset_name_or_id: Union[str, int],
             try:
                 fold = int(fold)
             except ValueError as e:
-                print(
-                    f'Unable to convert given value for fold to int: {fold}. fold must bei either "all" or an integer!')
+                print(f'Unable to convert given value for fold to int: {fold}. fold must bei either "all" or an integer!')
                 raise e
 
-    if save_trt:
-        os.environ["nnUNet_compile"] = "0"
-
-    if val_with_best:
-        assert not disable_checkpointing, '--val_best is not compatible with --disable_checkpointing'
-
-    if num_gpus > 1:
-        assert device.type == 'cuda', f"DDP training (triggered by num_gpus > 1) is only implemented for cuda devices. Your device: {device}"
-
-        os.environ['MASTER_ADDR'] = 'localhost'
-        if 'MASTER_PORT' not in os.environ.keys():
-            port = str(find_free_network_port())
-            print(f"using port {port}")
-            os.environ['MASTER_PORT'] = port  # str(port)
-
-        mp.spawn(run_ddp,
-                 args=(
-                     dataset_name_or_id,
-                     configuration,
-                     fold,
-                     trainer_class_name,
-                     plans_identifier,
-                     disable_checkpointing,
-                     continue_training,
-                     only_run_validation,
-                     save_trt,
-                     step_size_for_val,
-                     val_path,
-                     pretrained_weights,
-                     export_validation_probabilities,
-                     val_with_best,
-                     num_gpus),
-                 nprocs=num_gpus,
-                 join=True)
-    else:
-        nnunet_trainer = get_trainer_from_args(dataset_name_or_id, configuration, fold, trainer_class_name,
-                                               plans_identifier, continue_training, device=device)
-
-        if disable_checkpointing:
-            nnunet_trainer.disable_checkpointing = disable_checkpointing
-
-        assert not (continue_training and only_run_validation), f'Cannot set --c and --val flag at the same time. Dummy.'
-        assert not (continue_training and save_trt), f'Cannot set --c and --save_trt flag at the same time. Dummy.'
-        assert not (only_run_validation and save_trt), f'Cannot set --val and --save_trt flag at the same time. Dummy.'
-
-        if os.getenv("EXIT_AFTER_SPLIT", "0") == "0":
-            maybe_load_checkpoint(nnunet_trainer, continue_training, only_run_validation, save_trt, pretrained_weights)
-
-        if torch.cuda.is_available():
-            cudnn.deterministic = False
-            cudnn.benchmark = True
-
-        if save_trt:
-            nnunet_trainer.save_trt()
-            print("Saved compiled model")
-        else:
-            if not only_run_validation:
-                nnunet_trainer.run_training()
-
-            if val_with_best:
-                nnunet_trainer.load_checkpoint(join(nnunet_trainer.output_folder, 'checkpoint_best.pth'))
-
-            if os.getenv("DO_VALIDATION", "0") == "1":
-                nnunet_trainer.perform_actual_validation(export_validation_probabilities, step_size_for_val, val_path)
-            else:
-                print("Validation not done. To run validation, set the environment: DO_VALIDATION=1")
+    trainer_factory = partial(trainer_from_args, dataset_name_or_id, configuration, fold, trainer_class_name,
+                              plans_identifier, continue_training)
+    options = TrainingRunOptions(pretrained_weights=pretrained_weights,
+                                 export_validation_probabilities=export_validation_probabilities,
+                                 continue_training=continue_training,
+                                 only_run_validation=only_run_validation,
+                                 save_trt=save_trt,
+                                 step_size_for_val=step_size_for_val,
+                                 val_path=val_path,
+                                 disable_checkpointing=disable_checkpointing,
+                                 val_with_best=val_with_best)
+    launch_training(trainer_factory, device, num_gpus, options)
 
 
 def run_training_entry():
@@ -262,9 +384,11 @@ def run_training_entry():
                         help='[OPTIONAL] Save softmax predictions from final validation as npz files (in addition to predicted '
                              'segmentations). Needed for finding the best ensemble.')
     parser.add_argument('--c', action='store_true', required=False,
-                        help='[OPTIONAL] Continue training from latest checkpoint')
+                        help='[OPTIONAL] Continue training from the newest checkpoint: checkpoint_latest or '
+                             'checkpoint_best, whichever has more finished epochs')
     parser.add_argument('--val', action='store_true', required=False,
-                        help='[OPTIONAL] Set this flag to only run the validation. Requires training to have finished.')
+                        help='[OPTIONAL] Set this flag to only run the validation. Requires training to have finished '
+                             '(with --val_best only that a checkpoint_best exists).')
     parser.add_argument('--save_trt', action='store_true', required=False,
                         help='[OPTIONAL] Set this flag to save a compiled model. Requires training to have finished.')
     parser.add_argument('-step_size_for_val', type=float, default=0.5, required=False)
@@ -283,8 +407,7 @@ def run_training_entry():
                              "Use CUDA_VISIBLE_DEVICES=X nnUNetv2_train [...] instead!")
     args = parser.parse_args()
 
-    assert args.device in ['cpu', 'cuda',
-                           'mps'], f'-device must be either cpu, mps or cuda. Other devices are not tested/supported. Got: {args.device}.'
+    assert args.device in ['cpu', 'cuda', 'mps'], f'-device must be either cpu, mps or cuda. Other devices are not tested/supported. Got: {args.device}.'
     if args.device == 'cpu':
         # let's allow torch to use hella threads
         torch.set_num_threads(multiprocessing.cpu_count())
@@ -298,9 +421,8 @@ def run_training_entry():
         device = torch.device('mps')
 
     run_training(args.dataset_name_or_id, args.configuration, args.fold, args.tr, args.p, args.pretrained_weights,
-                 args.num_gpus, args.npz, args.c, args.val, args.save_trt, args.step_size_for_val, args.val_path,
-                 args.disable_checkpointing, args.val_best,
-                 device=device)
+                 args.num_gpus, args.npz, args.c, args.val,  args.save_trt, args.step_size_for_val, args.val_path,
+                 args.disable_checkpointing, args.val_best, device=device)
 
 
 if __name__ == '__main__':

@@ -10,9 +10,26 @@ def get_network_from_plans(arch_class_name, arch_kwargs, arch_kwargs_req_import,
                            allow_init=True, deep_supervision: Union[bool, None] = None):
     network_class = arch_class_name
     architecture_kwargs = dict(**arch_kwargs)
+
+    # resolve each distinct import string only once (per-stage lists frequently repeat the same class)
+    _resolved = {}
+
+    def _locate(s):
+        if s is None:
+            return None
+        if s not in _resolved:
+            _resolved[s] = pydoc.locate(s)
+        return _resolved[s]
+
     for ri in arch_kwargs_req_import:
-        if architecture_kwargs[ri] is not None:
-            architecture_kwargs[ri] = pydoc.locate(architecture_kwargs[ri])
+        value = architecture_kwargs[ri]
+        if value is None:
+            continue
+        # some kwargs (for example per-stage block classes) are lists of import strings
+        if isinstance(value, (list, tuple)):
+            architecture_kwargs[ri] = [_locate(i) for i in value]
+        else:
+            architecture_kwargs[ri] = _locate(value)
 
     nw_class = pydoc.locate(network_class)
     # sometimes things move around, this makes it so that we can at least recover some of that

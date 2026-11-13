@@ -23,17 +23,3 @@ def collate_outputs(outputs: List[dict]):
             raise ValueError(f'Cannot collate input of type {type(outputs[0][k])}. '
                              f'Modify collate_outputs to add this functionality')
     return collated
-
-
-def serializable(value):
-    if isinstance(value, torch.Tensor):
-        return value.item() if value.numel() == 1 else value.tolist()
-    if isinstance(value, np.generic):
-        return value.item()
-    if isinstance(value, np.ndarray):
-        return value.tolist()
-    if isinstance(value, list):
-        return [serializable(x) for x in value]
-    if isinstance(value, dict):
-        return {k: serializable(v) for k, v in value.items()}
-    return value

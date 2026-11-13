@@ -22,7 +22,7 @@ if __name__ == '__main__':
     predictor.initialize_from_trained_model_folder(
         join(nnUNet_results, 'Dataset003_Liver/nnUNetTrainer__nnUNetPlans__3d_lowres'),
         use_folds=(0,),
-        checkpoint_name='checkpoint_final.pth',
+        checkpoint_name='checkpoint_final.safetensors',
     )
     # variant 1: give input and output folders
     predictor.predict_from_files(join(nnUNet_raw, 'Dataset003_Liver/imagesTs'),
@@ -54,8 +54,6 @@ if __name__ == '__main__':
                                                            part_id=0)
 
     # predict several npy images
-    from nnunetv2.imageio.simpleitk_reader_writer import SimpleITKIO
-
     img, props = SimpleITKIO().read_images([join(nnUNet_raw, 'Dataset003_Liver/imagesTs/liver_147_0000.nii.gz')])
     img2, props2 = SimpleITKIO().read_images([join(nnUNet_raw, 'Dataset003_Liver/imagesTs/liver_146_0000.nii.gz')])
     img3, props3 = SimpleITKIO().read_images([join(nnUNet_raw, 'Dataset003_Liver/imagesTs/liver_145_0000.nii.gz')])

@@ -58,6 +58,13 @@ def check_cases(image_files: List[str], label_file: str, expected_num_channels: 
         print(f'Segmentation contains NaN pixel values. You need to fix that.\nSegmentation:\n{label_file}')
         ret = False
 
+    # check segmentation is single-channel
+    if segmentation.shape[0] != 1:
+        print('Error: Segmentation must be a single-channel integer label map but has %d channels. '
+              'Please re-save your label file as a single-channel image with integer class indices '
+              '(0, 1, 2, ...). \nSeg file: %s\n' % (segmentation.shape[0], label_file))
+        ret = False
+
     # check shapes
     shape_image = images.shape[1:]
     shape_seg = segmentation.shape[1:]
@@ -70,7 +77,14 @@ def check_cases(image_files: List[str], label_file: str, expected_num_channels: 
     # check spacings
     spacing_images = properties_image['spacing']
     spacing_seg = properties_seg['spacing']
-    if not np.allclose(spacing_seg, spacing_images):
+    if len(spacing_seg) != len(spacing_images):
+        print('Error: Image and segmentation have different spacing dimensions. '
+              '\nSpacing images: %s. \nSpacing seg: %s. \nImage files: %s. \nSeg file: %s\n'
+              'A multi-component or layered segmentation may cause this. Export a scalar labelmap with '
+              'the same spatial geometry as the image before preprocessing.\n' %
+              (spacing_images, spacing_seg, image_files, label_file))
+        ret = False
+    elif not np.allclose(spacing_seg, spacing_images):
         print('Error: Spacing mismatch between segmentation and corresponding images. \nSpacing images: %s. '
               '\nSpacing seg: %s. \nImage files: %s. \nSeg file: %s\n' %
               (spacing_images, spacing_seg, image_files, label_file))
@@ -88,10 +102,13 @@ def check_cases(image_files: List[str], label_file: str, expected_num_channels: 
         affine_image = properties_image['nibabel_stuff']['original_affine']
         affine_seg = properties_seg['nibabel_stuff']['original_affine']
         if not np.allclose(affine_image, affine_seg):
-            print('WARNING: Affine is not the same for image and seg! \nAffine image: %s \nAffine seg: %s\n'
-                  'Image files: %s. \nSeg file: %s.\nThis can be a problem but doesn\'t have to be. Please run '
-                  'nnUNetv2_plot_overlay_pngs to verify if everything is OK!\n'
-                  % (affine_image, affine_seg, image_files, label_file))
+            print('Warning: Affine mismatch between segmentation and corresponding images. '
+                '\nAffine image: %s \nAffine seg: %s\n'
+                'Image files: %s. \nSeg file: %s.\n'
+                'This is a warning only and will not cause a crash. Please verify that your '
+                'segmentation and image are correctly aligned by running: '
+                'nnUNetv2_plot_overlay_pngs\n'
+                % (affine_image, affine_seg, image_files, label_file))
 
     # sitk checks
     if 'sitk_stuff' in properties_image.keys():
@@ -99,16 +116,32 @@ def check_cases(image_files: List[str], label_file: str, expected_num_channels: 
         # spacing has already been checked, only check direction and origin
         origin_image = properties_image['sitk_stuff']['origin']
         origin_seg = properties_seg['sitk_stuff']['origin']
-        if not np.allclose(origin_image, origin_seg):
-            print('Warning: Origin mismatch between segmentation and corresponding images. \nOrigin images: %s. '
-                  '\nOrigin seg: %s. \nImage files: %s. \nSeg file: %s\n' %
+        if len(origin_image) != len(origin_seg):
+            print('Error: Image and segmentation have different origin dimensions. '
+                  '\nOrigin images: %s. \nOrigin seg: %s. \nImage files: %s. \nSeg file: %s\n' %
                   (origin_image, origin_seg, image_files, label_file))
+            ret = False
+        elif not np.allclose(origin_image, origin_seg):
+            print('Warning: Origin mismatch between segmentation and corresponding images. '
+                '\nOrigin images: %s. \nOrigin seg: %s. \nImage files: %s. \nSeg file: %s\n'
+                'This is a warning only and will not cause a crash. Please verify that your '
+                'segmentation and image are correctly aligned by running: '
+                'nnUNetv2_plot_overlay_pngs\n'
+                % (origin_image, origin_seg, image_files, label_file))
         direction_image = properties_image['sitk_stuff']['direction']
         direction_seg = properties_seg['sitk_stuff']['direction']
-        if not np.allclose(direction_image, direction_seg):
-            print('Warning: Direction mismatch between segmentation and corresponding images. \nDirection images: %s. '
-                  '\nDirection seg: %s. \nImage files: %s. \nSeg file: %s\n' %
+        if len(direction_image) != len(direction_seg):
+            print('Error: Image and segmentation have different direction dimensions. '
+                  '\nDirection images: %s. \nDirection seg: %s. \nImage files: %s. \nSeg file: %s\n' %
                   (direction_image, direction_seg, image_files, label_file))
+            ret = False
+        elif not np.allclose(direction_image, direction_seg):
+            print('Warning: Direction mismatch between segmentation and corresponding images. '
+                '\nDirection images: %s. \nDirection seg: %s. \nImage files: %s. \nSeg file: %s\n'
+                'This is a warning only and will not cause a crash. Please verify that your '
+                'segmentation and image are correctly aligned by running: '
+                'nnUNetv2_plot_overlay_pngs\n'
+                % (direction_image, direction_seg, image_files, label_file))
 
     return ret
 
@@ -125,7 +158,7 @@ def verify_dataset_integrity(folder: str, num_processes: int = 8) -> None:
     assert isfile(join(folder, "dataset.json")), f"There needs to be a dataset.json file in folder, folder={folder}"
     dataset_json = load_json(join(folder, "dataset.json"))
 
-    if not 'dataset' in dataset_json.keys():
+    if 'dataset' not in dataset_json.keys():
         assert isdir(join(folder, "imagesTr")), f"There needs to be a imagesTr subfolder in folder, folder={folder}"
         assert isdir(join(folder, "labelsTr")), f"There needs to be a labelsTr subfolder in folder, folder={folder}"
 

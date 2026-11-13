@@ -9,7 +9,7 @@ from acvl_utils.cropping_and_padding.bounding_boxes import insert_crop_into_imag
 from batchgenerators.utilities.file_and_folder_operations import load_json, save_pickle
 
 from nnunetv2.configuration import default_num_processes
-from nnunetv2.training.dataloading.nnunet_dataset import nnUNetDatasetBlosc2
+from nnunetv2.training.dataloading.nnunet_dataset import nnUNetDatasetBlosc2, comp_blosc2_params
 from nnunetv2.utilities.label_handling.label_handling import LabelManager
 from nnunetv2.utilities.logging import perf_logger
 from nnunetv2.utilities.plans_handling.plans_handler import PlansManager, ConfigurationManager
@@ -81,6 +81,7 @@ def convert_predicted_logits_to_segmentation_with_correct_shape(predicted_logits
         len(configuration_manager.spacing) == \
         len(properties_dict['shape_after_cropping_and_before_resampling']) else \
         [spacing_transposed[0], *configuration_manager.spacing]
+    current_spacing = [s if c is None else c for c, s in zip(current_spacing, spacing_transposed)]
 
     low_memory_resampling = os.getenv('nn_resampling_nn', '0') == "1"
     perf_logger.info(f"Using low_memory_resampling: {low_memory_resampling}")
@@ -88,13 +89,16 @@ def convert_predicted_logits_to_segmentation_with_correct_shape(predicted_logits
         perf_logger.info(f"Resampling logits from {predicted_logits.shape} "
                          f"to {properties_dict['shape_after_cropping_and_before_resampling']}")
         predicted_logits = configuration_manager.resampling_fn_probabilities(predicted_logits,
-                                                properties_dict['shape_after_cropping_and_before_resampling'],
-                                                current_spacing,
-                                                [properties_dict['spacing'][i] for i in plans_manager.transpose_forward])
+                                                                             properties_dict[
+                                                                                 'shape_after_cropping_and_before_resampling'],
+                                                                             current_spacing,
+                                                                             [properties_dict['spacing'][i] for i in
+                                                                              plans_manager.transpose_forward])
         perf_logger.info(f"Converting logits {predicted_logits.shape} to segmentation")
         segmentation, predicted_probabilities = get_segmentation_and_probabilities(
             predicted_logits, label_manager, return_probabilities)
         del predicted_logits
+        perf_logger.info("Got segmentation")
     else:
         device = torch.device(os.getenv('nn_resample_device', 'cpu'))
         perf_logger.info(f"Resampling on {device}")
@@ -115,11 +119,12 @@ def convert_predicted_logits_to_segmentation_with_correct_shape(predicted_logits
             antialias=False
         )[0, 0].to(torch.int16).cpu()
         perf_logger.info("End interpolate")
-
     # put segmentation in bbox (revert cropping)
     segmentation_reverted_cropping = np.zeros(properties_dict['shape_before_cropping'],
                                               dtype=np.uint8 if len(label_manager.foreground_labels) < 255 else np.uint16)
-    segmentation_reverted_cropping = insert_crop_into_image(segmentation_reverted_cropping, segmentation, properties_dict['bbox_used_for_cropping'])
+    segmentation_reverted_cropping = insert_crop_into_image(segmentation_reverted_cropping, segmentation,
+                                                            properties_dict['bbox_used_for_cropping'])
+    perf_logger.info("Reverted cropping")
     del segmentation
 
     # segmentation may be torch.Tensor but we continue with numpy
@@ -144,7 +149,6 @@ def convert_predicted_logits_to_segmentation_with_correct_shape(predicted_logits
     else:
         torch.set_num_threads(old_threads)
         return segmentation_reverted_cropping
-
 
 def export_prediction_from_logits(predicted_array_or_file: Union[np.ndarray, torch.Tensor], properties_dict: dict,
                                   configuration_manager: ConfigurationManager,
@@ -205,6 +209,8 @@ def resample_and_save(predicted: Union[torch.Tensor, np.ndarray], target_shape: 
     target_spacing = configuration_manager.spacing if len(configuration_manager.spacing) == \
         len(properties_dict['shape_after_cropping_and_before_resampling']) else \
         [spacing_transposed[0], *configuration_manager.spacing]
+    current_spacing = [s if c is None else c for c, s in zip(current_spacing, spacing_transposed)]
+    target_spacing = [s if t is None else t for t, s in zip(target_spacing, spacing_transposed)]
     predicted_array_or_file = configuration_manager.resampling_fn_probabilities(predicted,
                                                                                 target_shape,
                                                                                 current_spacing,
@@ -217,8 +223,19 @@ def resample_and_save(predicted: Union[torch.Tensor, np.ndarray], target_shape: 
     if isinstance(segmentation, torch.Tensor):
         segmentation = segmentation.cpu().numpy()
 
-    if dataset_class is None:
-        nnUNetDatasetBlosc2.save_seg(segmentation.astype(dtype=np.uint8 if len(label_manager.foreground_labels) < 255 else np.uint16), output_file)
+    if dataset_class is None or dataset_class == nnUNetDatasetBlosc2:
+        block_size, chunk_size = comp_blosc2_params(
+            (1, *segmentation.shape),
+            tuple(configuration_manager.patch_size),
+            bytes_per_pixel=1 if len(label_manager.foreground_labels) < 255 else 2
+        )
+        block_size = [int(i) for i in block_size[1:]]
+        chunk_size = [int(i) for i in chunk_size[1:]]
+        nnUNetDatasetBlosc2.save_seg(
+            segmentation.astype(dtype=np.uint8 if len(label_manager.foreground_labels) < 255 else np.uint16),
+            output_file,
+            chunks_seg=chunk_size,
+            blocks_seg=block_size)
     else:
         dataset_class.save_seg(segmentation.astype(dtype=np.uint8 if len(label_manager.foreground_labels) < 255 else np.uint16), output_file)
     torch.set_num_threads(old_threads)

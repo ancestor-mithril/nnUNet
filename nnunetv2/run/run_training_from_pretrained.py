@@ -1,0 +1,239 @@
+import argparse
+from functools import partial
+from typing import Union
+
+import torch
+from batchgenerators.utilities.file_and_folder_operations import join, load_json
+from nnunetv2.paths import nnUNet_preprocessed
+from nnunetv2.run.run_training import TrainingRunOptions, launch_training
+from nnunetv2.training.nnUNetTrainer.pretraining.pretrainedTrainer import PretrainedTrainer
+from nnunetv2.utilities.dataset_name_id_conversion import maybe_convert_to_dataset_name
+from nnunetv2.utilities.find_objects import recursive_find_trainer_class_by_name
+
+def get_trainer_from_args(
+        dataset_name_or_id: Union[int, str],
+        configuration: str,
+        fold: int,
+        trainer_name: str = "nnUNetTrainer",
+        plans_identifier: str = "nnUNetPlans",
+        device: torch.device = torch.device("cuda"),
+        pretrained_from_scratch: bool = False,
+        overwrite_ckpt_path: str = None,
+        continue_training: bool = False,
+):
+    # same lookup as nnUNetv2_train: built-in trainers first, then the folders in nnUNet_extTrainer
+    nnunet_trainer = recursive_find_trainer_class_by_name(trainer_name)
+
+    # handle dataset input. If it's an ID we need to convert to int from string
+    if dataset_name_or_id.startswith("Dataset"):
+        pass
+    else:
+        try:
+            dataset_name_or_id = int(dataset_name_or_id)
+        except ValueError:
+            raise ValueError(
+                f"dataset_name_or_id must either be an integer or a valid dataset name with the pattern "
+                f"DatasetXXX_YYY where XXX are the three(!) task ID digits. Your "
+                f"input: {dataset_name_or_id}"
+            )
+
+    # initialize nnunet trainer
+    preprocessed_dataset_folder_base = join(nnUNet_preprocessed, maybe_convert_to_dataset_name(dataset_name_or_id))
+    plans_file = join(preprocessed_dataset_folder_base, plans_identifier + ".json")
+    plans = load_json(plans_file)
+    dataset_json = load_json(join(preprocessed_dataset_folder_base, "dataset.json"))
+    if pretrained_from_scratch:
+        plans["plans_name"] = plans["plans_name"] + "__from_scratch"
+        plans["pretrain_info"]["checkpoint_path"] = None
+    if overwrite_ckpt_path is not None:
+        plans["pretrain_info"]["checkpoint_path"] = overwrite_ckpt_path
+    # The base nnUNetTrainer.__init__ pops "continue_training" from the plans dict, so it must be present.
+    plans["continue_training"] = continue_training
+    nnunet_trainer = nnunet_trainer(
+        plans=plans, configuration=configuration, fold=fold, dataset_json=dataset_json, device=device
+    )
+    # use_pretrained_weights is derived inside the trainer from the plan's pretrain_info
+    # (checkpoint_path is None => from scratch). It can still be overridden as an attribute below.
+    nnunet_trainer.use_pretrained_weights = not pretrained_from_scratch
+    return nnunet_trainer
+
+def pretrained_trainer_from_args(dataset_name_or_id, configuration, fold, trainer_class_name, plans_identifier,
+                                 from_scratch, continue_training, overwrite_ckpt_path,
+                                 device: torch.device) -> PretrainedTrainer:
+    """get_trainer_from_args with device last, so that functools.partial can bind the rest."""
+    nnunet_trainer: PretrainedTrainer = get_trainer_from_args(
+        dataset_name_or_id,
+        configuration,
+        fold,
+        trainer_class_name,
+        plans_identifier,
+        device=device,
+        # from_scratch creates a new plan name, which allows easy comparison pretrained vs non-pretrained
+        pretrained_from_scratch=from_scratch,
+        overwrite_ckpt_path=overwrite_ckpt_path,
+        continue_training=continue_training,
+    )
+    # do not re-apply the pretrained weights when resuming: the checkpoint we are about to load already has them
+    nnunet_trainer.use_pretrained_weights = not (continue_training or from_scratch)
+    return nnunet_trainer
+
+
+def train_pretrained(
+    dataset_name_or_id: Union[str, int],
+    configuration: str,
+    fold: Union[int, str],
+    trainer_class_name: str,
+    plans_identifier: str,
+    from_scratch: bool,
+    num_gpus: int = 1,
+    export_validation_probabilities: bool = False,
+    continue_training: bool = False,
+    only_run_validation: bool = False,
+    disable_checkpointing: bool = False,
+    val_with_best: bool = False,
+    device: torch.device = torch.device("cuda"),
+    overwrite_ckpt_path: str = None,
+):
+    if isinstance(fold, str):
+        if fold != "all":
+            try:
+                fold = int(fold)
+            except ValueError as e:
+                print(
+                    f'Unable to convert given value for fold to int: {fold}. fold must bei either "all" or an integer!'
+                )
+                raise e
+
+    trainer_factory = partial(pretrained_trainer_from_args, dataset_name_or_id, configuration, fold,
+                              trainer_class_name, plans_identifier, from_scratch, continue_training,
+                              overwrite_ckpt_path)
+    # pretrained_weights is nnUNetv2_train's -pretrained_weights, which this entry point does not expose: the
+    # weights come from the plan's pretrain_info instead.
+    options = TrainingRunOptions(pretrained_weights=None,
+                                 export_validation_probabilities=export_validation_probabilities,
+                                 continue_training=continue_training,
+                                 only_run_validation=only_run_validation,
+                                 disable_checkpointing=disable_checkpointing,
+                                 val_with_best=val_with_best)
+    launch_training(trainer_factory, device, num_gpus, options)
+
+
+def train_pretrained_entrypoint():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("dataset_name_or_id", type=str, help="Dataset name or ID to train with")
+    parser.add_argument("configuration", type=str, help="Configuration that should be trained")
+    parser.add_argument(
+        "fold", type=str, help="Fold of the 5-fold cross-validation.", choices=["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "all"]
+    )
+    parser.add_argument(
+        "-tr",
+        type=str,
+        required=False,
+        default="PretrainedTrainer",
+        help="[OPTIONAL] Use this flag to specify a custom trainer. Default: nnUNetTrainer",
+    )
+    parser.add_argument(
+        "-p",
+        type=str,
+        required=True,
+        help="[REQUIRED] Use this to specify a custom plans identifier.",
+    )
+    parser.add_argument(
+        "--from_scratch",
+        required=False,
+        action="store_true",
+        help="[OPTIONAL] flag to train from scratch with same config as when loading checkpoints.",
+    )
+    parser.add_argument(
+        "-num_gpus", type=int, default=1, required=False, help="Specify the number of GPUs to use for training"
+    )
+    parser.add_argument(
+        "--npz",
+        action="store_true",
+        required=False,
+        help="[OPTIONAL] Save softmax predictions from final validation as npz files (in addition to predicted "
+        "segmentations). Needed for finding the best ensemble.",
+    )
+    parser.add_argument(
+        "--c", action="store_true", required=False, help="[OPTIONAL] Continue training from latest checkpoint"
+    )
+    parser.add_argument(
+        "--val",
+        action="store_true",
+        required=False,
+        help="[OPTIONAL] Set this flag to only run the validation. Requires training to have finished "
+        "(with --val_best only that a checkpoint_best exists).",
+    )
+    parser.add_argument(
+        "--val_best",
+        action="store_true",
+        required=False,
+        help="[OPTIONAL] If set, the validation will be performed with the checkpoint_best instead "
+        "of checkpoint_final. NOT COMPATIBLE with --disable_checkpointing! "
+        "WARNING: This will use the same 'validation' folder as the regular validation "
+        "with no way of distinguishing the two!",
+    )
+    parser.add_argument(
+        "--disable_checkpointing",
+        action="store_true",
+        required=False,
+        help="[OPTIONAL] Set this flag to disable checkpointing. Ideal for testing things out and "
+        "you dont want to flood your hard drive with checkpoints.",
+    )
+    parser.add_argument(
+        "-device",
+        type=str,
+        default="cuda",
+        required=False,
+        help="Use this to set the device the training should run with. Available options are 'cuda' "
+        "(GPU), 'cpu' (CPU) and 'mps' (Apple M1/M2). Do NOT use this to set which GPU ID! "
+        "Use CUDA_VISIBLE_DEVICES=X nnUNetv2_train [...] instead!",
+    )
+    parser.add_argument(
+        "-overwrite_ckpt_path",
+        type=str,
+        default=None,
+        required=False,
+        help="Use this to overwrite the checkpoint",
+    )
+    args = parser.parse_args()
+
+    assert args.device in [
+        "cpu",
+        "cuda",
+        "mps",
+    ], f"-device must be either cpu, mps or cuda. Other devices are not tested/supported. Got: {args.device}."
+    if args.device == "cpu":
+        # let's allow torch to use hella threads
+        import multiprocessing
+
+        torch.set_num_threads(multiprocessing.cpu_count())
+        device = torch.device("cpu")
+    elif args.device == "cuda":
+        # multithreading in torch doesn't help nnU-Net if run on GPU
+        torch.set_num_threads(1)
+        torch.set_num_interop_threads(1)
+        device = torch.device("cuda")
+    else:
+        device = torch.device("mps")
+
+    train_pretrained(
+        args.dataset_name_or_id,
+        args.configuration,
+        args.fold,
+        args.tr,
+        args.p,
+        args.from_scratch,
+        args.num_gpus,
+        args.npz,
+        args.c,
+        args.val,
+        args.disable_checkpointing,
+        args.val_best,
+        device=device,
+        overwrite_ckpt_path=args.overwrite_ckpt_path
+    )
+
+
+if __name__ == "__main__":
+    train_pretrained_entrypoint()

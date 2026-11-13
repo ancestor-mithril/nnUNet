@@ -21,12 +21,8 @@ from batchgeneratorsv2.transforms.utils.pseudo2d import Convert3DTo2DTransform, 
 from batchgeneratorsv2.transforms.utils.random import RandomTransform
 from batchgeneratorsv2.transforms.utils.remove_label import RemoveLabelTansform
 from batchgeneratorsv2.transforms.utils.seg_to_regions import ConvertSegmentationToRegionsTransform
-from batchgenerators.dataloading.nondet_multi_threaded_augmenter import NonDetMultiThreadedAugmenter
-from batchgenerators.dataloading.single_threaded_augmenter import SingleThreadedAugmenter
 
-from nnunetv2.training.dataloading.data_loader import nnUNetDataLoader
 from nnunetv2.training.nnUNetTrainer.nnUNetTrainer import nnUNetTrainer
-from nnunetv2.utilities.default_n_proc_DA import get_allowed_n_proc_DA
 import numpy as np
 
 
@@ -57,7 +53,10 @@ class nnUNetTrainer_DASegOrd0(nnUNetTrainer):
                 patch_size_spatial, patch_center_dist_from_border=0, random_crop=False, p_elastic_deform=0,
                 p_rotation=0.2,
                 rotation=rotation_for_DA, p_scaling=0.2, scaling=(0.7, 1.4), p_synchronize_scaling_across_axes=1,
-                bg_style_seg_sampling=False, mode_seg='nearest'
+                bg_style_seg_sampling=False,
+                mode_seg='nearest',
+                border_mode_seg='constant',
+                padding_value_seg=-1,
             )
         )
 

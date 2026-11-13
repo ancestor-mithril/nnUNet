@@ -1,6 +1,6 @@
 [project]
 name = "nnunetv2"
-version = "2.6.4"
+version = "2.8.1"
 requires-python = ">=3.10"
 description = "nnU-Net is a framework for out-of-the box image segmentation."
 readme = "readme.md"
@@ -31,11 +31,11 @@ keywords = [
 ]
 dependencies = [
     "torch>=2.1.2,!=2.9.*",
-    "acvl-utils>=0.2.3,<0.3",  # 0.3 may bring breaking changes. Careful!
-    "dynamic-network-architectures>=0.4.1,<0.5",
+    "acvl-utils>=0.2.6,<0.3",  # 0.3 may bring breaking changes. Careful!
+    "dynamic-network-architectures>=0.4.4,<0.5",
     "tqdm",
     "scipy",
-    "batchgenerators>=0.25.1",
+    "batchgenerators>=0.25.6",
     "numpy>=1.24",
     "scikit-learn",
     "scikit-image>=0.19.3",
@@ -49,9 +49,11 @@ dependencies = [
     "seaborn",
     "imagecodecs",
     "yacs",
-    "batchgeneratorsv2>=0.3.0",
+    "batchgeneratorsv2>=0.3.8",
     "einops",
-    "blosc2>=3.0.0b1"
+    "blosc2>=4.1.0",
+    "safetensors>=0.4.0",
+    "timm>=1.0"  # required by nnssl finetuning (Primus); dynamic-network-architectures declares timm unpinned, which can resolve to a version predating timm.layers
 ]
 
 [project.urls]
@@ -63,6 +65,7 @@ nnUNetv2_plan_and_preprocess = "nnunetv2.experiment_planning.plan_and_preprocess
 nnUNetv2_extract_fingerprint = "nnunetv2.experiment_planning.plan_and_preprocess_entrypoints:extract_fingerprint_entry"
 nnUNetv2_plan_experiment = "nnunetv2.experiment_planning.plan_and_preprocess_entrypoints:plan_experiment_entry"
 nnUNetv2_preprocess = "nnunetv2.experiment_planning.plan_and_preprocess_entrypoints:preprocess_entry"
+nnUNetv2_extract_sampling_locations = "nnunetv2.experiment_planning.plan_and_preprocess_entrypoints:extract_sampling_locations_entry"
 nnUNetv2_train = "nnunetv2.run.run_training:run_training_entry"
 nnUNetv2_predict_from_modelfolder = "nnunetv2.inference.predict_from_raw_data:predict_entry_point_modelfolder"
 nnUNetv2_predict = "nnunetv2.inference.predict_from_raw_data:predict_entry_point"
@@ -76,24 +79,38 @@ nnUNetv2_plot_overlay_pngs = "nnunetv2.utilities.overlay_plots:entry_point_gener
 nnUNetv2_download_pretrained_model_by_url = "nnunetv2.model_sharing.entry_points:download_by_url"
 nnUNetv2_install_pretrained_model_from_zip = "nnunetv2.model_sharing.entry_points:install_from_zip_entry_point"
 nnUNetv2_export_model_to_zip = "nnunetv2.model_sharing.entry_points:export_pretrained_model_entry"
+nnUNetv2_convert_checkpoints_to_safetensors = "nnunetv2.utilities.convert_checkpoints:convert_checkpoints_entry"
 nnUNetv2_move_plans_between_datasets = "nnunetv2.experiment_planning.plans_for_pretraining.move_plans_between_datasets:entry_point_move_plans_between_datasets"
 nnUNetv2_evaluate_folder = "nnunetv2.evaluation.evaluate_predictions:evaluate_folder_entry_point"
 nnUNetv2_evaluate_simple = "nnunetv2.evaluation.evaluate_predictions:evaluate_simple_entry_point"
 nnUNetv2_convert_MSD_dataset = "nnunetv2.dataset_conversion.convert_MSD_dataset:entry_point"
 nnUNetv2_create_docker = "nnunetv2.docker_service.create_docker:entry_point"
+nnUNetv2_preprocess_like_nnssl = "nnunetv2.experiment_planning.like_nnssl:preprocess_like_nnssl_entrypoint"
+nnUNetv2_plan_like_dynamic = "nnunetv2.experiment_planning.like_nnssl:plan_like_dynamic_entrypoint"
+nnUNetv2_train_pretrained = "nnunetv2.run.run_training_from_pretrained:train_pretrained_entrypoint"
 
 [project.optional-dependencies]
 dev = [
-    "black",
-    "ruff",
     "pre-commit"
 ]
+intel_macos = [
+    "torch<2.3 ; platform_system == 'Darwin'",
+    "numpy<2 ; platform_system == 'Darwin'",
+]
+
+[tool.setuptools.packages.find]
+include = ["nnunetv2*"]
 
 [build-system]
 requires = ["setuptools>=67.8.0"]
 build-backend = "setuptools.build_meta"
 
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+select = ["E", "F", "W"]
+ignore = ["F403", "F405", "E501", "E741", "E722"]
+
 [tool.codespell]
 skip = '.git,*.pdf,*.svg'
-#
-# ignore-words-list = ''
+ignore-words-list = 'LiTS,assertIn'

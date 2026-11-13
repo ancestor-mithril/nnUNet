@@ -11,6 +11,14 @@ class nnUNetTrainer_5epochs(nnUNetTrainer):
         self.num_epochs = 5
 
 
+class nnUNetTrainer_2epochs(nnUNetTrainer):
+    def __init__(self, plans: dict, configuration: str, fold: int, dataset_json: dict,
+                 device: torch.device = torch.device('cuda')):
+        """used for debugging plans etc"""
+        super().__init__(plans, configuration, fold, dataset_json, device)
+        self.num_epochs = 2
+
+
 class nnUNetTrainer_1epoch(nnUNetTrainer):
     def __init__(self, plans: dict, configuration: str, fold: int, dataset_json: dict,
                  device: torch.device = torch.device('cuda')):
@@ -75,7 +83,7 @@ class nnUNetTrainer_2000epochs(nnUNetTrainer):
         super().__init__(plans, configuration, fold, dataset_json, device)
         self.num_epochs = 2000
 
-    
+
 class nnUNetTrainer_4000epochs(nnUNetTrainer):
     def __init__(self, plans: dict, configuration: str, fold: int, dataset_json: dict,
                  device: torch.device = torch.device('cuda')):

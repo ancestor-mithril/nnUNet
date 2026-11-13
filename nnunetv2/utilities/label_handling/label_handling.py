@@ -6,7 +6,7 @@ from typing import Union, List, Tuple, Type
 
 import numpy as np
 import torch
-from acvl_utils.cropping_and_padding.bounding_boxes import bounding_box_to_slice, insert_crop_into_image
+from acvl_utils.cropping_and_padding.bounding_boxes import insert_crop_into_image
 from batchgenerators.utilities.file_and_folder_operations import join
 from tqdm import trange
 
@@ -21,6 +21,26 @@ from nnunetv2.utilities.logging import perf_logger
 # see https://adamj.eu/tech/2021/05/13/python-type-hints-how-to-fix-circular-imports/
 if TYPE_CHECKING:
     from nnunetv2.utilities.plans_handling.plans_handler import PlansManager, ConfigurationManager
+
+
+def argmax_first_axis(x: np.ndarray, max_elements_per_slab: int = 2 ** 22) -> np.ndarray:
+    """
+    x.argmax(0), the same result, faster and with less memory for float16 x (nnU-Net's logits are float16).
+
+    numpy's argmax has no vectorized float16 loop, and along an axis other than the last one it first makes a
+    contiguous transposed copy of the whole array. Here float16 input is cast to float32 one slab (along axis 1) at a
+    time, straight into channel-last order, so each slab is copied once and reduced along its contiguous last axis.
+    The cast is exact, so every comparison, the tie break (first maximum) and NaN handling (first NaN) are unchanged.
+    Other dtypes go to numpy's argmax as they are.
+    """
+    if x.dtype != np.float16 or x.ndim < 2:
+        return x.argmax(0)
+    out = np.empty(x.shape[1:], dtype=np.intp)
+    elements_per_row = x.shape[0] * int(np.prod(x.shape[2:], dtype=np.int64))
+    rows = max(1, max_elements_per_slab // max(1, elements_per_row))
+    for start in range(0, x.shape[1], rows):
+        out[start:start + rows] = np.moveaxis(x[:, start:start + rows], 0, -1).astype(np.float32, order='C').argmax(-1)
+    return out
 
 
 class LabelManager(object):
@@ -54,7 +74,7 @@ class LabelManager(object):
             self.inference_nonlin = inference_nonlin
 
     def _sanity_check(self, label_dict: dict):
-        if not 'background' in label_dict.keys():
+        if 'background' not in label_dict.keys():
             raise RuntimeError('Background label not declared (remember that this should be label 0!)')
         bg_label = label_dict['background']
         if isinstance(bg_label, (tuple, list)):
@@ -179,20 +199,7 @@ class LabelManager(object):
             is_numpy = isinstance(predicted_probabilities, np.ndarray)
             if not is_numpy:
                 predicted_probabilities = predicted_probabilities.numpy()
-
-            seg_dtype =np.int8 if predicted_probabilities.shape[0] < 255 else np.int16
-            seg_shape = predicted_probabilities.shape[1:]
-            perf_logger.info(f"pre-allocating segmentation with {seg_shape} and {seg_dtype}")
-            segmentation = np.empty(seg_shape, dtype=seg_dtype)
-            perf_logger.info(f"Start argmax for {predicted_probabilities.shape}")
-            if os.getenv("use_sliding_softmax", "0") == "1":
-                div_factor = int(os.getenv("sliding_softmax", "50"))
-                for i in trange(int(predicted_probabilities.shape[1] / div_factor) + 1, desc="Argmax"):
-                    predicted_probabilities[:, i * div_factor: (i + 1) * div_factor].argmax(
-                        0, out=segmentation[i * div_factor: (i + 1) * div_factor])
-            else:
-                predicted_probabilities.argmax(0, out=segmentation)
-            perf_logger.info("Finished argmax")
+            segmentation = argmax_first_axis(predicted_probabilities)
             if not is_numpy:
                 segmentation = torch.from_numpy(segmentation)
         return segmentation
@@ -254,6 +261,24 @@ class LabelManager(object):
         return self.filter_background(self.all_labels)
 
     @property
+    def annotated_classes_key(self) -> Tuple[int, ...]:
+        """
+        Pseudo-class covering every *annotated* voxel, background included. Only meaningful when there is an
+        ignore label: patches without foreground still have to be drawn from annotated regions. The producer
+        of the foreground sampling locations and the dataloader that reads them must agree on this key, so it
+        is defined here rather than in either of them.
+        """
+        return tuple([-1] + self.all_labels)
+
+    @property
+    def classes_or_regions_for_sampling(self) -> List[Union[int, Tuple[int, ...]]]:
+        """Classes/regions that foreground sampling locations are collected for."""
+        collect_for_this = list(self.foreground_regions if self.has_regions else self.foreground_labels)
+        if self.has_ignore_label:
+            collect_for_this.append(self.annotated_classes_key)
+        return collect_for_this
+
+    @property
     def num_segmentation_heads(self):
         if self.has_regions:
             return len(self.foreground_regions)
@@ -300,8 +325,8 @@ def convert_labelmap_to_one_hot(segmentation: Union[np.ndarray, torch.Tensor],
         result = np.zeros((len(all_labels), *segmentation.shape),
                           dtype=output_dtype if output_dtype is not None else (np.uint8 if max(all_labels) < 255 else np.uint16))
         # variant 1, fastest in my testing
-        for i, l in enumerate(all_labels):
-            result[i] = segmentation == l
+        for i, lb in enumerate(all_labels):
+            result[i] = segmentation == lb
         # variant 2. Takes about twice as long so nah
         # result = np.eye(len(all_labels))[segmentation].transpose((3, 0, 1, 2))
     return result

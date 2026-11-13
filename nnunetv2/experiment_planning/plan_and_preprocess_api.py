@@ -1,4 +1,3 @@
-import warnings
 from typing import List, Type, Optional, Tuple, Union
 
 from batchgenerators.utilities.file_and_folder_operations import join, maybe_mkdir_p, load_json
@@ -9,9 +8,12 @@ from nnunetv2.experiment_planning.dataset_fingerprint.fingerprint_extractor impo
 from nnunetv2.experiment_planning.experiment_planners.default_experiment_planner import ExperimentPlanner
 from nnunetv2.experiment_planning.verify_dataset_integrity import verify_dataset_integrity
 from nnunetv2.paths import nnUNet_raw, nnUNet_preprocessed
+from nnunetv2.preprocessing.sampling_locations.extract_sampling_locations import (
+    extract_sampling_locations_for_folder)
 from nnunetv2.utilities.dataset_name_id_conversion import convert_id_to_dataset_name
 from nnunetv2.utilities.find_class_by_name import recursive_find_python_class
 from nnunetv2.utilities.plans_handling.plans_handler import PlansManager
+from nnunetv2.utilities.file_path_utilities import copy_file_if_newer
 from nnunetv2.utilities.utils import get_filenames_of_train_images_and_targets
 
 
@@ -19,7 +21,8 @@ def extract_fingerprint_dataset(dataset_id: int,
                                 fingerprint_extractor_class: Type[
                                     DatasetFingerprintExtractor] = DatasetFingerprintExtractor,
                                 num_processes: int = default_num_processes, check_dataset_integrity: bool = False,
-                                clean: bool = True, verbose: bool = True):
+                                clean: bool = True, verbose: bool = True,
+                                show_progress_bar: bool = True):
     """
     Returns the fingerprint as a dictionary (additionally to saving it)
     """
@@ -30,12 +33,15 @@ def extract_fingerprint_dataset(dataset_id: int,
         verify_dataset_integrity(join(nnUNet_raw, dataset_name), num_processes)
 
     fpe = fingerprint_extractor_class(dataset_id, num_processes, verbose=verbose)
+    if hasattr(fpe, 'show_progress_bar'):
+        fpe.show_progress_bar = show_progress_bar
     return fpe.run(overwrite_existing=clean)
 
 
 def extract_fingerprints(dataset_ids: List[int], fingerprint_extractor_class_name: str = 'DatasetFingerprintExtractor',
                          num_processes: int = default_num_processes, check_dataset_integrity: bool = False,
-                         clean: bool = True, verbose: bool = True):
+                         clean: bool = True, verbose: bool = True,
+                         show_progress_bar: bool = True):
     """
     clean = False will not actually run this. This is just a switch for use with nnUNetv2_plan_and_preprocess where
     we don't want to rerun fingerprint extraction every time.
@@ -45,7 +51,7 @@ def extract_fingerprints(dataset_ids: List[int], fingerprint_extractor_class_nam
                                                               current_module="nnunetv2.experiment_planning")
     for d in dataset_ids:
         extract_fingerprint_dataset(d, fingerprint_extractor_class, num_processes, check_dataset_integrity, clean,
-                                    verbose)
+                                    verbose, show_progress_bar)
 
 
 def plan_experiment_dataset(dataset_id: int,
@@ -103,7 +109,8 @@ def preprocess_dataset(dataset_id: int,
                        plans_identifier: str = 'nnUNetPlans',
                        configurations: Union[Tuple[str], List[str]] = ('2d', '3d_fullres', '3d_lowres'),
                        num_processes: Union[int, Tuple[int, ...], List[int]] = (8, 4, 8),
-                       verbose: bool = False) -> None:
+                       verbose: bool = False,
+                       show_progress_bar: bool = True) -> None:
     if not isinstance(num_processes, list):
         num_processes = list(num_processes)
     if len(num_processes) == 1:
@@ -119,6 +126,8 @@ def preprocess_dataset(dataset_id: int,
     print(f'Preprocessing dataset {dataset_name}')
     plans_file = join(nnUNet_preprocessed, dataset_name, plans_identifier + '.json')
     plans_manager = PlansManager(plans_file)
+    label_manager = plans_manager.get_label_manager(load_json(join(nnUNet_preprocessed, dataset_name,
+                                                                  'dataset.json')))
     for n, c in zip(num_processes, configurations):
         print(f'Configuration: {c}...')
         if c not in plans_manager.available_configurations:
@@ -127,26 +136,38 @@ def preprocess_dataset(dataset_id: int,
                 f"dataset {dataset_name}. Skipping.")
             continue
         configuration_manager = plans_manager.get_configuration(c)
+        print(configuration_manager)
         preprocessor = configuration_manager.preprocessor_class(verbose=verbose)
+        if hasattr(preprocessor, 'show_progress_bar'):
+            preprocessor.show_progress_bar = show_progress_bar
         preprocessor.run(dataset_id, c, plans_identifier, num_processes=n)
+
+        # Foreground sampling locations are not part of the per-case pkl any more; they live in a compressed
+        # store per configuration folder. Building it only reads the segmentations, so it is cheap, and it can
+        # be re-run at any time with nnUNetv2_extract_sampling_locations (no need to preprocess again).
+        # num_processes is deliberately not `n`: that budget is tuned for RAM-hungry image preprocessing, while
+        # this pass only ever touches segmentations.
+        extract_sampling_locations_for_folder(
+            join(nnUNet_preprocessed, dataset_name, configuration_manager.data_identifier),
+            label_manager.classes_or_regions_for_sampling, num_processes=default_num_processes,
+            verbose=verbose, show_progress_bar=show_progress_bar)
 
     # copy the gt to a folder in the nnUNet_preprocessed so that we can do validation even if the raw data is no
     # longer there (useful for compute cluster where only the preprocessed data is available)
-    from distutils.file_util import copy_file
     maybe_mkdir_p(join(nnUNet_preprocessed, dataset_name, 'gt_segmentations'))
     dataset_json = load_json(join(nnUNet_raw, dataset_name, 'dataset.json'))
     dataset = get_filenames_of_train_images_and_targets(join(nnUNet_raw, dataset_name), dataset_json)
     # only copy files that are newer than the ones already present
     for k in dataset:
-        copy_file(dataset[k]['label'],
-                  join(nnUNet_preprocessed, dataset_name, 'gt_segmentations', k + dataset_json['file_ending']),
-                  update=True)
+        copy_file_if_newer(dataset[k]['label'],
+                           join(nnUNet_preprocessed, dataset_name, 'gt_segmentations', k + dataset_json['file_ending']))
 
 
 def preprocess(dataset_ids: List[int],
                plans_identifier: str = 'nnUNetPlans',
                configurations: Union[Tuple[str], List[str]] = ('2d', '3d_fullres', '3d_lowres'),
                num_processes: Union[int, Tuple[int, ...], List[int]] = (8, 4, 8),
-               verbose: bool = False):
+               verbose: bool = False,
+               show_progress_bar: bool = True):
     for d in dataset_ids:
-        preprocess_dataset(d, plans_identifier, configurations, num_processes, verbose)
+        preprocess_dataset(d, plans_identifier, configurations, num_processes, verbose, show_progress_bar)

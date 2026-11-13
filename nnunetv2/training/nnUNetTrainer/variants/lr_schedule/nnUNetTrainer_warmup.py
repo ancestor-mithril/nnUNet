@@ -5,6 +5,7 @@ from torch._dynamo import OptimizedModule
 
 from nnunetv2.training.lr_scheduler.warmup import Lin_incr_LRScheduler, PolyLRScheduler_offset
 from nnunetv2.training.nnUNetTrainer.nnUNetTrainer import nnUNetTrainer
+from nnunetv2.utilities.checkpoints import NO_OPTIMIZER_STATE_WARNING, load_checkpoint_file
 from torch.nn.parallel import DistributedDataParallel as DDP
 
 from nnunetv2.utilities.helpers import empty_cache
@@ -52,7 +53,7 @@ class nnUNetTrainer_warmup(nnUNetTrainer):
             self.print_to_log_file("train whole net, default schedule")
             if self.training_stage == "warmup_all":
                 # we can keep the existing optimizer and don't need to create a new one. This will allow us to keep
-                # the accumulated momentum terms which already point in a useful driection
+                # the accumulated momentum terms which already point in a useful direction
                 optimizer = self.optimizer
             else:
                 optimizer = torch.optim.SGD(
@@ -74,7 +75,7 @@ class nnUNetTrainer_warmup(nnUNetTrainer):
 
         super().on_train_epoch_start()
 
-    def load_checkpoint(self, filename_or_checkpoint: Union[dict, str]) -> None:
+    def load_checkpoint(self, checkpoint: Union[dict, str]) -> None:
         """
         We need to overwrite that entire function because we need to fiddle the correct optimizer in between
         loading the checkpoint and applying the optimizer states. Yuck.
@@ -82,8 +83,8 @@ class nnUNetTrainer_warmup(nnUNetTrainer):
         if not self.was_initialized:
             self.initialize()
 
-        if isinstance(filename_or_checkpoint, str):
-            checkpoint = torch.load(filename_or_checkpoint, map_location=self.device)
+        if isinstance(checkpoint, str):
+            checkpoint = load_checkpoint_file(checkpoint, map_location=self.device)
         # if state dict comes from nn.DataParallel but we use non-parallel model here then the state dict keys do not
         # match. Use heuristic to make it match
         new_state_dict = {}
@@ -122,7 +123,11 @@ class nnUNetTrainer_warmup(nnUNetTrainer):
         else:
             self.optimizer, self.lr_scheduler = self.configure_optimizers("train")
 
-        self.optimizer.load_state_dict(checkpoint["optimizer_state"])
+        if "optimizer_state" in checkpoint:
+            self.optimizer.load_state_dict(checkpoint["optimizer_state"])
+        elif self.current_epoch < self.num_epochs:
+            # checkpoint_final has no optimizer state. Only matters if training continues from it
+            self.print_to_log_file(NO_OPTIMIZER_STATE_WARNING)
         if self.grad_scaler is not None:
-            if checkpoint["grad_scaler_state"] is not None:
+            if checkpoint.get("grad_scaler_state") is not None:
                 self.grad_scaler.load_state_dict(checkpoint["grad_scaler_state"])
