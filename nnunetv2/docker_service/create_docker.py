@@ -53,7 +53,7 @@ RUN mkdir -p /app/input /app/output ${{cont_data_path}} ${{cont_model_path}} ${{
     chmod 777 ${{cont_model_path}} && \
     pip install timed-decorator dice-score-3d 'git+https://github.com/fii-optim-lab/label-metrics.git' && \
     pip uninstall nnunetv2 --yes && \
-    pip install 'git+https://github.com/ancestor-mithril/nnUNet.git@new' --no-cache-dir && \
+    pip install 'git+https://github.com/ancestor-mithril/nnUNet.git@master' --no-cache-dir && \
     COMMIT_HASH=$(git ls-remote "https://github.com/ancestor-mithril/nnUNet.git" "refs/heads/new" | awk '{{print $1}}') && \
     echo "$COMMIT_HASH" > /app/COMMIT_HASH
 
