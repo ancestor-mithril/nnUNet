@@ -57,7 +57,7 @@ from nnunetv2.evaluation.evaluate_predictions import compute_metrics_on_folder
 from nnunetv2.inference.export_prediction import export_prediction_from_logits, resample_and_save
 from nnunetv2.inference.predict_from_raw_data import nnUNetPredictor
 from nnunetv2.inference.sliding_window_prediction import compute_gaussian
-from nnunetv2.paths import nnUNet_preprocessed, nnUNet_results
+from nnunetv2.paths import nnUNet_preprocessed, nnUNet_results, nnUNet_raw
 from nnunetv2.training.data_augmentation.compute_initial_patch_size import get_patch_size
 from nnunetv2.training.dataloading.nnunet_dataset import infer_dataset_class
 from nnunetv2.training.dataloading.data_loader import nnUNetDataLoader
@@ -189,6 +189,8 @@ class nnUNetTrainer(object):
 
         ### Setting all the folder names. We need to make sure things don't crash in case we are just running
         # inference and some of the folders may not be defined!
+        self.raw_dataset_folder_base = join(nnUNet_raw, self.plans_manager.dataset_name) \
+            if nnUNet_raw.is_set() else None
         self.preprocessed_dataset_folder_base = join(nnUNet_preprocessed, self.plans_manager.dataset_name) \
             if nnUNet_preprocessed.is_set() else None
         self.output_folder_base = join(nnUNet_results, self.plans_manager.dataset_name,
@@ -698,6 +700,7 @@ class nnUNetTrainer(object):
             val_keys = tr_keys
         else:
             splits_file = join(self.preprocessed_dataset_folder_base, "splits_final.json")
+            cases_file = join(self.raw_dataset_folder_base, "cases.json")
             dataset = self.dataset_class(self.preprocessed_dataset_folder,
                                          identifiers=None,
                                          folder_with_segs_from_previous_stage=self.folder_with_segs_from_previous_stage)
@@ -711,7 +714,15 @@ class nnUNetTrainer(object):
                 if not isfile(splits_file):
                     self.print_to_log_file("Creating new 5-fold cross-validation split...")
                     all_keys_sorted = list(np.sort(list(dataset.identifiers)))
-                    splits = generate_crossval_split(all_keys_sorted, seed=12345, n_splits=5)
+                    print("all_keys_sorted", all_keys_sorted)
+                    stratification_labels = None
+                    if isfile(cases_file):
+                        cases = load_json(cases_file)
+                        stratification_labels = {k: v["source_project"] for k, v in cases.items()}
+                        print("stratification_labels", stratification_labels)
+                        save_json(stratification_labels, join(self.preprocessed_dataset_folder_base, "stratification.json"))
+                    splits = generate_crossval_split(
+                        all_keys_sorted, stratification_labels=stratification_labels, seed=12345, n_splits=5)
                     # Independent trainings (e.g. all folds launched at once) can still race each other for this
                     # file. Publish by atomic rename so that nobody ever reads a partially written file. The split
                     # is seeded, so it does not matter whose file wins.

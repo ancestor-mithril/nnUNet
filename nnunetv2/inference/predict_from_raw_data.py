@@ -212,8 +212,9 @@ class nnUNetPredictor(object):
         if not isinstance(parameters[0], str):
             # initialize network with first set of parameters, also see https://github.com/MIC-DKFZ/nnUNet/issues/2520
             network.load_state_dict(parameters[0])
+            self._loaded_parameters = (weakref.ref(network), parameters[0])
         self.network = network
-        self._loaded_parameters = (weakref.ref(network), parameters[0])
+
 
         self.dataset_json = dataset_json
         self.trainer_name = trainer_name
