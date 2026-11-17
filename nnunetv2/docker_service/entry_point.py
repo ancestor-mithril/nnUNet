@@ -206,9 +206,16 @@ def load_labels(labels_json):
         raise RuntimeError(error_msg) from e
 
 
-def update_network_config(path, enc=None, dec=None, features=None, config="3d_fullres"):
+def update_network_config(path, enc=None, dec=None, features=None, config="3d_fullres", patch_size=None, spacing=None):
     with open(path) as f:
         plans = json.load(f)
+
+    if patch_size:
+        transpose_forward = plans["transpose_forward"]
+        patch_size = np.array(patch_size)[transpose_forward].tolist()
+        print("old patch size", plans["configurations"][config]["patch_size"])
+        plans["configurations"][config]["patch_size"] = patch_size
+        print("new size", patch_size)
 
     arch = plans["configurations"][config]["architecture"]["arch_kwargs"]
 
@@ -217,12 +224,19 @@ def update_network_config(path, enc=None, dec=None, features=None, config="3d_fu
     print("n_blocks_per_stage", arch["n_blocks_per_stage"])
     print("n_conv_per_stage_decoder", arch["n_conv_per_stage_decoder"])
 
-    if enc and len(enc) != len(arch["n_blocks_per_stage"]):
-        raise ValueError(f"enc must contain {len(arch['n_blocks_per_stage'])} values")
-    if dec and len(dec) != len(arch["n_conv_per_stage_decoder"]):
-        raise ValueError(f"dec_must contain {len(arch['n_conv_per_stage_decoder'])} values")
-    if features and len(features) != len(arch["features_per_stage"]):
-        raise ValueError(f"features_must contain {len(arch['features_per_stage'])} values")
+    if spacing:
+        transpose_forward = plans["transpose_forward"]
+        spacing = np.array(spacing)[transpose_forward].tolist()
+        print("old spacing", plans["configurations"][config]["spacing"])
+        plans["configurations"][config]["spacing"] = spacing
+        print("new spacing", spacing)
+
+    # if enc and len(enc) != len(arch["n_blocks_per_stage"]):
+    #     raise ValueError(f"enc must contain {len(arch['n_blocks_per_stage'])} values")
+    # if dec and len(dec) != len(arch["n_conv_per_stage_decoder"]):
+    #     raise ValueError(f"dec_must contain {len(arch['n_conv_per_stage_decoder'])} values")
+    # if features and len(features) != len(arch["features_per_stage"]):
+    #     raise ValueError(f"features_must contain {len(arch['features_per_stage'])} values")
 
     if enc:
         arch["n_blocks_per_stage"] = enc
@@ -242,10 +256,7 @@ def update_network_config(path, enc=None, dec=None, features=None, config="3d_fu
 
 
 def preprocess(args):
-    # QUICK FIX:
     model_size = args.model_size
-    if args.model_size == 32:
-        model_size = 24
     raw_path = os.getenv("cont_data_path")
     images_tr = os.path.join(raw_path, "imagesTr")
     original_labels = os.path.join(raw_path, "labels")
@@ -317,19 +328,29 @@ def preprocess(args):
         print("Preprocess failed. Check the logs for the error")
         raise RuntimeError("Preprocess failed")
 
-    if args.model_size in deep_sizes:
+    if model_size in deep_sizes:
         print("Using DEEP size")
+        # update_network_config(
+        #     os.path.join(preprocess_path, "nnUNetResEncUNetLPlans_torchres.json"),
+        #     enc=[1, 3, 4, 8, 8, 8],
+        #     dec=[2, 2, 1, 1, 1],
+        # )
+    elif model_size in deep_and_wide_sizes:
+        print("Using deep_and_wide size")
+        # update_network_config(os.path.join(preprocess_path, "nnUNetResEncUNetLPlans_torchres.json"),
+        #     enc=[1, 3, 4, 8, 8, 8],
+        #     dec=[2, 2, 2, 1, 1],
+        #     features=[48, 96, 128, 256, 320, 384]
+        # )
+
+    if model_size == 24:
         update_network_config(
             os.path.join(preprocess_path, "nnUNetResEncUNetLPlans_torchres.json"),
-            enc=[1, 3, 4, 8, 8, 8],
-            dec=[2, 2, 1, 1, 1],
-        )
-    elif args.model_size in deep_and_wide_sizes:
-        print("Using deep_and_wide size")
-        update_network_config(os.path.join(preprocess_path, "nnUNetResEncUNetLPlans_torchres.json"),
-            enc=[1, 3, 4, 8, 8, 8],
-            dec=[2, 2, 2, 1, 1],
-            features=[48, 96, 128, 256, 320, 384]
+            enc=[1, 3, 5, 6, 7, 8],
+            dec=[1, 1, 1, 1, 1],
+            features=[32, 64, 160, 256, 320, 400],
+            patch_size=[256, 144, 144],
+            spacing=None
         )
     command = (
         "nnUNetv2_train "
