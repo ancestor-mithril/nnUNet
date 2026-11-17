@@ -5,7 +5,7 @@ import torch
 # Add ugly import guards to not break nnunet in case wrong dynamic-network-architectures version.
 try:
     from dynamic_network_architectures.architectures.primus import PrimusS, PrimusM, PrimusL, PrimusB
-except ImportError, AttributeError:
+except (ImportError, AttributeError):
     warnings.warn(
         "Unable to import Primus architectures. Make sure you have the correct dynamic_network_architectures package installed."
     )
