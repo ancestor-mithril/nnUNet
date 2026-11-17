@@ -5,7 +5,15 @@ import socket
 from dataclasses import dataclass
 from functools import partial
 from typing import Callable, Optional, Union
+import torch
 
+if not hasattr(torch.jit, "interface"):
+    def _noop_jit_interface(cls):
+        return cls
+
+    torch.jit.interface = _noop_jit_interface
+
+from timm.optim.muon import Muon
 import torch.cuda
 import torch.distributed as dist
 import torch.multiprocessing as mp

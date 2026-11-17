@@ -3,6 +3,13 @@ import os
 import torch
 from torch.optim import Adam, AdamW, Optimizer
 
+if not hasattr(torch.jit, "interface"):
+    def _noop_jit_interface(cls):
+        return cls
+
+    torch.jit.interface = _noop_jit_interface
+
+
 from nnunetv2.training.lr_scheduler.polylr import PolyLRScheduler
 from nnunetv2.training.nnUNetTrainer.nnUNetTrainer import nnUNetTrainer
 

@@ -15,6 +15,13 @@ from typing import Tuple, Union, List, Optional
 
 import numpy as np
 import torch
+
+if not hasattr(torch.jit, "interface"):
+    def _noop_jit_interface(cls):
+        return cls
+
+    torch.jit.interface = _noop_jit_interface
+
 from acvl_utils.cropping_and_padding.padding import pad_nd_image
 from batchgenerators.dataloading.multi_threaded_augmenter import MultiThreadedAugmenter
 from batchgenerators.utilities.file_and_folder_operations import load_json, join, isfile, maybe_mkdir_p, isdir, subdirs, \

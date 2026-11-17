@@ -14,6 +14,14 @@ from uuid import uuid4
 
 import numpy as np
 import torch
+
+if not hasattr(torch.jit, "interface"):
+    def _noop_jit_interface(cls):
+        return cls
+
+    torch.jit.interface = _noop_jit_interface
+
+from timm.optim.muon import Muon
 from batchgenerators.dataloading.multi_threaded_augmenter import MultiThreadedAugmenter
 from batchgenerators.dataloading.nondet_multi_threaded_augmenter import NonDetMultiThreadedAugmenter
 from batchgenerators.dataloading.single_threaded_augmenter import SingleThreadedAugmenter
