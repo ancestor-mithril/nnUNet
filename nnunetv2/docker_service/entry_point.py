@@ -483,6 +483,7 @@ def validate(args):
             "CUDA_VISIBLE_DEVICES": str(args.device),
             "USE_HALF": "1",
             "USE_TENSOR_RT": "1",
+            "nnUNet_compile": "0",
             **os.environ,
         }
         command = (
@@ -527,6 +528,7 @@ def validate(args):
             "CUDA_VISIBLE_DEVICES": str(args.device),
             "DO_VALIDATION": "1",
             "USE_TENSOR_RT": "1",
+            "nnUNet_compile": "0",
             "USE_HALF": "1",
             **os.environ,
         }

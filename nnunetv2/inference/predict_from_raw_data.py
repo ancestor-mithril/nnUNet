@@ -235,8 +235,8 @@ class nnUNetPredictor(object):
         for i in range(len(parameters)):
             params = parameters[i]
             if isinstance(params, str):
+                print("Using tensor rt")
                 network = self.load_trt(params)
-                network.eval()
                 network = network.to(device=self.device, dtype=torch.float16)
             else:
                 network = deepcopy(self.network)
@@ -290,7 +290,10 @@ class nnUNetPredictor(object):
         if not os.path.isfile(path):
             raise FileNotFoundError(f'File {path} does not exist')
         import torch_tensorrt
-        return torch_tensorrt.load(path).module()
+        network = torch_tensorrt.load(path).module()
+        print("Loaded", type(network))
+        network.eval()
+        return network
 
     def manual_initialization(self, network: nn.Module, plans_manager: PlansManager,
                               configuration_manager: ConfigurationManager,
@@ -327,6 +330,7 @@ class nnUNetPredictor(object):
             self.network = self.network.to(device=self.device, dtype=torch.float16)
 
         if self.use_tensor_rt:
+            print("Using tensor rt")
             self.network = self.load_trt(os.path.join(output_folder, f"compiled_model_trt.ep"))
         elif allow_compile:
             print('Using torch.compile')
