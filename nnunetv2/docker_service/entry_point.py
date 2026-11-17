@@ -349,7 +349,7 @@ def preprocess(args):
             enc=[1, 3, 5, 6, 7, 8],
             dec=[1, 1, 1, 1, 1],
             features=[32, 64, 160, 256, 320, 400],
-            patch_size=[256, 144, 144],
+            patch_size=[256, 128, 128],
             spacing=None
         )
     command = (
