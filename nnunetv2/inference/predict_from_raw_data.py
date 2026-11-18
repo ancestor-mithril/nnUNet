@@ -292,7 +292,6 @@ class nnUNetPredictor(object):
         import torch_tensorrt
         network = torch_tensorrt.load(path).module()
         print("Loaded", type(network))
-        network.eval()
         return network
 
     def manual_initialization(self, network: nn.Module, plans_manager: PlansManager,
