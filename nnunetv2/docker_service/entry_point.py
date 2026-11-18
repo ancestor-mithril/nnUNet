@@ -54,7 +54,7 @@ def run_command(command, envs):
 
 
 def try_inference(input_path: str, output_path: str, folds: list[str], use_cuda: bool = False, device_index: int = 0,
-                  use_best: bool = False, step_size=0.5, inference_mode: str = "slow"):
+                  step_size=0.5, inference_mode: str = "slow"):
     fold = " ".join(folds)
     if use_cuda:
         print(f"Using cuda device {device_index} for inference!")
@@ -72,8 +72,6 @@ def try_inference(input_path: str, output_path: str, folds: list[str], use_cuda:
     if use_cuda:
         envs["CUDA_VISIBLE_DEVICES"] = str(device_index)
 
-    checkpoint = "checkpoint_best.pth" if use_best else "checkpoint_final.pth"
-
     command = (
         f"nnUNetv2_predict "
         f"-i {input_path} "
@@ -84,7 +82,6 @@ def try_inference(input_path: str, output_path: str, folds: list[str], use_cuda:
         f"-c {envs['nnUNet_conf']} "
         f"-f {fold} "
         f"-step_size {step_size} "
-        f"-chk {checkpoint} "
         f"-npp 0 "
         f"-nps 0 "
         f"--not_on_device --continue_prediction --disable_progress_bar "
@@ -98,6 +95,13 @@ def try_inference(input_path: str, output_path: str, folds: list[str], use_cuda:
     return run_command(command, envs)
 
 
+def validate_model_checkpoint(path: str):
+    model_1 = os.path.join(path, "checkpoint_final.pth")
+    model_2 = os.path.join(path, "checkpoint_final.safetensors")
+    if not os.path.isfile(model_1) or not os.path.isfile(model_2):
+        raise FileNotFoundError(f"Model checkpoint {model_2} not available, please train the model first")
+
+
 def inference(args):
     if args.step_size != 0.0 and (args.step_size < 0.1 or args.step_size > 1.0):
         raise RuntimeError(f"step_size can't be lower than 0.1 or bigger than 1.0, is {args.step_size}")
@@ -109,15 +113,13 @@ def inference(args):
         folds = [args.fold]
     for fold in folds:
         fold_path = os.path.join(model_path, f"fold_{fold}")
-        model_checkpoint = os.path.join(fold_path, f"checkpoint_final.pth")
         if not os.path.isdir(args.input):
             raise FileNotFoundError(f"Folder {args.input} is not available")
         if not os.path.isdir(model_path):
             raise FileNotFoundError(f"Folder {model_path} is not available")
         if not os.path.isdir(fold_path):
             raise FileNotFoundError(f"Fold {fold_path} not available, please train the model first")
-        if not os.path.isfile(model_checkpoint):
-            raise FileNotFoundError(f"Model checkpoint {model_checkpoint} not available, please train the model first")
+        validate_model_checkpoint(fold_path)
 
     # if args.fold == "ensemble":
     #     folds = ["0"]
@@ -489,13 +491,11 @@ def validate(args):
 
     model_path = os.getenv("cont_model_path")
     fold_path = os.path.join(model_path, f"fold_{args.fold}")
-    model_checkpoint = os.path.join(fold_path, f"checkpoint_final.pth")
     if not os.path.isdir(model_path):
         raise FileNotFoundError(f"Folder {model_path} is not available")
     if not os.path.isdir(fold_path):
         raise FileNotFoundError(f"Fold {fold_path} not available, please train the model first")
-    if not os.path.isfile(model_checkpoint):
-        raise FileNotFoundError(f"Model checkpoint {model_checkpoint} not available, please train the model first")
+    validate_model_checkpoint(fold_path)
 
     compiled_path = os.path.join(fold_path, f"compiled_model_trt.ep")
     if not os.path.isfile(compiled_path):
