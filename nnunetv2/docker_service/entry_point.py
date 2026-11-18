@@ -98,7 +98,7 @@ def try_inference(input_path: str, output_path: str, folds: list[str], use_cuda:
 def validate_model_checkpoint(path: str):
     model_1 = os.path.join(path, "checkpoint_final.pth")
     model_2 = os.path.join(path, "checkpoint_final.safetensors")
-    if not os.path.isfile(model_1) or not os.path.isfile(model_2):
+    if not os.path.isfile(model_1) and not os.path.isfile(model_2):
         raise FileNotFoundError(f"Model checkpoint {model_2} not available, please train the model first")
 
 
