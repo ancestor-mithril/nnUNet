@@ -4,11 +4,13 @@ import json
 import os
 import subprocess
 import time
+from collections import defaultdict
+from pathlib import Path
 
 import SimpleITK as sitk
 import numpy as np
 import torch.accelerator
-from label_metrics import evaluate_folders, KFoldResult
+from label_metrics import evaluate_folders, KFoldResult, evaluate_files
 from tqdm import tqdm
 
 num_epochs_range = [
@@ -525,7 +527,7 @@ def validate(args):
         (0.5, None),  # Must be first
         # (0.5, "dilate_tromb"),
         # (0.35, None),
-        (0.45, None),
+        # (0.45, None),
     ]:
         print(f"Doing validation for {step_size}, {other}")
 
@@ -615,6 +617,42 @@ def validate(args):
         print(f"Serialized evaluation written to {serialized_path}")
         print(f"Validation metrics written to {metrics_path}")
         print(f"Validation report written to {report_path}")
+
+        stratification_file = os.path.join(preprocess_path, "stratification.json")
+        if os.path.isfile(stratification_file):
+            with open(stratification_file, "r") as f:
+                data = json.load(f)
+
+            reversed_stratification = defaultdict(list)
+            for k, v in data.items():
+                reversed_stratification[v].append(k)
+
+            for k, v in reversed_stratification.items():
+                print(f"checking results for {k}")
+
+                serialized_path = os.path.join(save_folder, f"{evaluation_name}_{k}.json")
+                metrics_path = os.path.join(save_folder, f"{metrics_name}_{k}.json")
+                report_path = os.path.join(save_folder, f"{metrics_name}_{k}.txt")
+
+                validation_files = [os.path.join(labels_tr, name + "_0000.nii.gz") for name in v]
+
+                result = evaluate_files(
+                    prediction_paths=sorted(validation_files),
+                    ground_truth_paths=sorted(Path(labels_tr).glob("*.nii.gz")),
+                    labels=labels,
+                    prediction_suffix=".nii.gz",
+                    reorient=False,
+                    workers=8,
+                )
+
+                result.serialize(serialized_path)
+                result.save_metrics_json(metrics_path)
+                result.save_text_report(report_path)
+
+                print(f"Serialized evaluation written to {serialized_path}")
+                print(f"Validation metrics written to {metrics_path}")
+                print(f"Validation report written to {report_path}")
+
 
 
 def cross_validate(args):
