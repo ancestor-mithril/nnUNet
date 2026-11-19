@@ -634,7 +634,7 @@ def validate(args):
                 metrics_path = os.path.join(save_folder, f"{metrics_name}_{k}.json")
                 report_path = os.path.join(save_folder, f"{metrics_name}_{k}.txt")
 
-                validation_files = [os.path.join(labels_tr, name + "_0000.nii.gz") for name in v]
+                validation_files = [os.path.join(labels_tr, name + ".nii.gz") for name in v]
 
                 result = evaluate_files(
                     prediction_paths=sorted(validation_files),
