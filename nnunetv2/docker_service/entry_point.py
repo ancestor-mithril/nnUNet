@@ -31,6 +31,9 @@ num_epochs_range = [
 
 deep_sizes = [
     18,
+    23,
+    25,
+    22,
     26,
 ]
 deep_and_wide_sizes = [
@@ -357,6 +360,15 @@ def preprocess(args):
             features=[32, 64, 160, 256, 320, 400],
             patch_size=[256, 128, 128],
             spacing=None
+        )
+    elif model_size == 23:
+        update_network_config(
+            os.path.join(preprocess_path, "nnUNetResEncUNetLPlans_torchres.json"),
+            enc=[1, 3, 5, 6, 7, 8],
+            dec=[1, 1, 1, 1, 1],
+            features=[32, 64, 160, 256, 320, 400],
+            patch_size=[256, 128, 128],
+            spacing=[1.0, 1.0, 1.0],
         )
     command = (
         "nnUNetv2_train "
