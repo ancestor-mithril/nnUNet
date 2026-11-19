@@ -191,7 +191,8 @@ Models trained with older nnU-Net versions have `.pth` checkpoints instead. They
 is read, and `nnUNetv2_convert_checkpoints_to_safetensors` converts them (see the changelog).
 
 During training it is often useful to watch the progress. We therefore recommend that you have a look at the generated
-progress.png when running the first training. It will be updated after each epoch.
+progress.png when running the first training. It is updated at most once a minute (`plot_progress_every_s` of
+the trainer; 0 updates it after every epoch) and always after the last epoch.
 
 Training times largely depend on the GPU. The smallest GPU we recommend for training is the Nvidia RTX 2080ti. With
 that all network trainings take less than 2 days. Refer to our [benchmarks](benchmarking.md) to see if your system is
@@ -252,6 +253,10 @@ strongly recommend you use all 5 folds. Thus, all 5 folds must have been trained
 
 If you wish to make predictions with a single model, train the `all` fold and specify it in `nnUNetv2_predict`
 with `-f all`
+
+For datasets with many classes and/or very large images where `nnUNetv2_predict` runs out of RAM/VRAM, there is an
+optional memory-efficient alternative, `nnUNetv2_predict_streaming`. See
+[Memory-efficient (streaming) inference](how-to/run-inference-streaming.md).
 
 #### Ensembling multiple configurations
 If you wish to ensemble multiple predictions (typically form different configurations), you can do so with the following command:
