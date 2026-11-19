@@ -635,7 +635,7 @@ def validate(args):
                 report_path = os.path.join(save_folder, f"{metrics_name}_{k}.txt")
 
                 prediction_paths = [os.path.join(validation_path, name + ".nii.gz") for name in v]
-                prediction_paths = [x for x in prediction_paths is os.path.isfile(x)]
+                prediction_paths = [x for x in prediction_paths if os.path.isfile(x)]
                 print("Prediction paths:", len(prediction_paths))
 
                 result = evaluate_files(
