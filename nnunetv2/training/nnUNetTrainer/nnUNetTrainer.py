@@ -1,3 +1,4 @@
+import contextlib
 import inspect
 import json
 import multiprocessing
@@ -72,12 +73,12 @@ from nnunetv2.training.dataloading.data_loader import nnUNetDataLoader
 from nnunetv2.training.logging.nnunet_logger import MetaLogger
 from nnunetv2.training.loss.compound_losses import DC_and_CE_loss, DC_and_BCE_loss
 from nnunetv2.training.loss.deep_supervision import DeepSupervisionWrapper
-from nnunetv2.training.loss.dice import get_tp_fp_fn_tn, MemoryEfficientSoftDiceLoss
+from nnunetv2.training.loss.dice import get_tp_fp_fn_from_argmax, get_tp_fp_fn_tn, MemoryEfficientSoftDiceLoss
 from nnunetv2.training.lr_scheduler.polylr import PolyLRScheduler
 from nnunetv2.utilities.checkpoints import NO_OPTIMIZER_STATE_WARNING, check_checkpoint_storable, \
     load_checkpoint_file, other_format_filename, remove_checkpoint_files, safetensors_filename, save_checkpoint_file, \
     without_training_state
-from nnunetv2.utilities.collate_outputs import collate_outputs
+from nnunetv2.utilities.collate_outputs import collate_outputs, outputs_to_host
 from nnunetv2.utilities.crossval_split import generate_crossval_split
 from nnunetv2.utilities.ddp import get_ddp_topology
 from nnunetv2.utilities.default_n_proc_DA import get_allowed_n_proc_DA
@@ -86,8 +87,6 @@ from nnunetv2.utilities.get_network_from_plans import get_network_from_plans
 from nnunetv2.utilities.helpers import empty_cache, dummy_context, set_default_inductor_cache_dir
 from nnunetv2.utilities.label_handling.label_handling import convert_labelmap_to_one_hot, determine_num_input_channels
 from nnunetv2.utilities.plans_handling.plans_handler import PlansManager, ConfigurationManager
-
-
 from nnunetv2.utilities.logging import perf_logger
 
 
@@ -128,7 +127,33 @@ def assert_model_finite(model, where):
                 f"Non-finite buffer {name} {where}"
             )
 
+# fused SGD is not in every torch version nnU-Net supports
+SGD_HAS_FUSED = 'fused' in inspect.signature(torch.optim.SGD.__init__).parameters
+
+
+def zero_missing_momentum_buffers(optimizer: torch.optim.Optimizer) -> None:
+    """
+    Gives every parameter of a fused SGD param group that has no momentum buffer a zero one. Fused SGD creates the
+    buffers with empty_like in its first step, and if GradScaler skips that step (inf / nan gradients) they are never
+    written: the next step uses uninitialised memory as momentum. After loading a checkpoint of foreach SGD, parameters
+    that had not received a gradient yet have no buffer, and fused SGD fails when some buffers exist and others do not.
+    Foreach SGD starts a missing buffer as the gradient, which is what a zero buffer gives: 0.99 * 0 + g = g.
+    """
+    for group in optimizer.param_groups:
+        if group.get('fused') and group.get('momentum', 0) != 0:
+            for p in group['params']:
+                if optimizer.state[p].get('momentum_buffer') is None:
+                    optimizer.state[p]['momentum_buffer'] = torch.zeros_like(p)
+
+
 class nnUNetTrainer(object):
+    # The loss classes _build_loss instantiates. They are class attributes rather than hardcoded names so that a
+    # mixin can swap in a different implementation - ChunkedLossMixin does exactly that for the many-class
+    # datasets - without having to duplicate _build_loss in every trainer variant. The defaults reproduce the
+    # stock behaviour exactly.
+    dice_class = MemoryEfficientSoftDiceLoss
+    dc_and_ce_class = DC_and_CE_loss
+
     def __init__(self, plans: dict, configuration: str, fold: int, dataset_json: dict,
                  device: torch.device = torch.device('cuda')):
         # From https://grugbrain.dev/. Worth a read ya big brains ;-)
@@ -267,6 +292,10 @@ class nnUNetTrainer(object):
         ### checkpoint saving stuff
         self.save_every = int(os.getenv("SAVE_EVERY", "50"))
         self.disable_checkpointing = False
+
+        # progress.png is written at most this often (seconds). 0 plots every epoch
+        self.plot_progress_every_s = 60
+        self._last_progress_plot = None
 
         self.was_initialized = False
         self.clip_value = int(os.getenv("CLIP_VALUE", "12"))
@@ -475,6 +504,24 @@ class nnUNetTrainer(object):
             deep_supervision_scales = None  # for train and val_transforms
         return deep_supervision_scales
 
+    @property
+    def oversample_foreground_percent(self) -> float:
+        """
+        Share of each batch that is sampled to contain foreground. Set it for the whole batch (default 0.33). Under DDP,
+        _set_batch_size_and_oversample works out each rank's share of it, and from then on reading the attribute
+        returns that share (this is what the data loader gets). The value that was set is kept, so calling
+        _set_batch_size_and_oversample again splits the batch's value again instead of splitting a rank's share of
+        it, which would change how much is oversampled. Setting the attribute discards the share.
+        """
+        if self._oversample_foreground_percent_this_rank is not None:
+            return self._oversample_foreground_percent_this_rank
+        return self._oversample_foreground_percent
+
+    @oversample_foreground_percent.setter
+    def oversample_foreground_percent(self, value: float):
+        self._oversample_foreground_percent = value
+        self._oversample_foreground_percent_this_rank = None
+
     def _set_batch_size_and_oversample(self):
         if not self.is_ddp:
             # set batch size to what the plan says, leave oversample untouched
@@ -500,12 +547,13 @@ class nnUNetTrainer(object):
             # We need to use the same scheme here because an oversample of 0.33 with a batch size of 2 will be rounded
             # to an oversample of 0.5 (1 sample random, one oversampled). This may get lost if we just numerically
             # compute oversample
-            oversample = [True if not i < round(global_batch_size * (1 - self.oversample_foreground_percent)) else False
+            global_oversample = self._oversample_foreground_percent  # the batch's value, see oversample_foreground_percent
+            oversample = [True if not i < round(global_batch_size * (1 - global_oversample)) else False
                           for i in range(global_batch_size)]
 
-            if sample_id_high / global_batch_size < (1 - self.oversample_foreground_percent):
+            if sample_id_high / global_batch_size < (1 - global_oversample):
                 oversample_percent = 0.0
-            elif sample_id_low / global_batch_size > (1 - self.oversample_foreground_percent):
+            elif sample_id_low / global_batch_size > (1 - global_oversample):
                 oversample_percent = 1.0
             else:
                 oversample_percent = sum(oversample[sample_id_low:sample_id_high]) / batch_size_per_GPU[self.global_rank]
@@ -514,7 +562,7 @@ class nnUNetTrainer(object):
             print("global rank", self.global_rank, "batch_size", batch_size_per_GPU[self.global_rank])
 
             self.batch_size = batch_size_per_GPU[self.global_rank]
-            self.oversample_foreground_percent = oversample_percent
+            self._oversample_foreground_percent_this_rank = oversample_percent
 
     def _build_loss(self):
         ce_kwargs = {}
@@ -526,17 +574,24 @@ class nnUNetTrainer(object):
                                    {'batch_dice': self.configuration_manager.batch_dice,
                                     'do_bg': True, 'smooth': 1e-5, 'ddp': self.is_ddp},
                                    use_ignore_label=self.label_manager.ignore_label is not None,
-                                   dice_class=MemoryEfficientSoftDiceLoss)
+                                   dice_class=self.dice_class)
         else:
-            loss = DC_and_CE_loss({'batch_dice': self.configuration_manager.batch_dice,
-                                   'smooth': 1e-5, 'do_bg': False, 'ddp': self.is_ddp}, ce_kwargs=ce_kwargs, weight_ce=1, weight_dice=1,
-                                  ignore_label=self.label_manager.ignore_label, dice_class=MemoryEfficientSoftDiceLoss)
-
-        loss.ce = loss.ce.to(self.device)
+            loss = self.dc_and_ce_class({'batch_dice': self.configuration_manager.batch_dice,
+                                         'smooth': 1e-5, 'do_bg': False, 'ddp': self.is_ddp}, {}, weight_ce=1,
+                                        weight_dice=1, ignore_label=self.label_manager.ignore_label,
+                                        dice_class=self.dice_class)
+        if hasattr(loss, "ce"):
+            loss.ce = loss.ce.to(self.device)
+        loss = loss.to(self.device)
 
         if self._do_i_compile():
+            # Compile the whole compound loss, not just loss.dc: the dice and the CE start from the same logits, so one
+            # graph lets inductor share that work and AOTAutograd recompute instead of saving (-35 % peak VRAM and
+            # 1.65x faster for the loss at 119 classes / 160^3). The dice term is bit-identical; the CE's log_softmax
+            # runs in fp32 instead of the fp16 of eager autocast, which is closer to an fp64 reference. Measurements and
+            # the Dice check against the previous wiring: documentation/changelog.md.
             set_default_inductor_cache_dir()
-            loss.dc = torch.compile(loss.dc)
+            loss = torch.compile(loss)
 
         # we give each output a weight which decreases exponentially (division by 2) as the resolution decreases
         # this gives higher resolution outputs more weight in the loss
@@ -640,8 +695,13 @@ class nnUNetTrainer(object):
             self.print_to_log_file('These are the global plan.json settings:\n', dct, '\n', add_timestamp=False)
 
     def configure_optimizers(self):
+        # Fused SGD does the whole update in one pass over the parameters instead of several, and GradScaler hands it
+        # the inf check on the GPU instead of making the host wait for it every step. It computes the same update as
+        # foreach SGD (nnunetv2/tests/test_training_loop_host_overhead.py)
+        fused = self.device.type == 'cuda' and SGD_HAS_FUSED
         optimizer = torch.optim.SGD(self.network.parameters(), self.initial_lr, weight_decay=self.weight_decay,
-                                    momentum=0.99, nesterov=True)
+                                    momentum=0.99, nesterov=True, **({'fused': True} if fused else {}))
+        zero_missing_momentum_buffers(optimizer)
         lr_scheduler = PolyLRScheduler(optimizer, self.initial_lr, self.num_epochs)
         return optimizer, lr_scheduler
 
@@ -1125,20 +1185,24 @@ class nnUNetTrainer(object):
         if self.global_rank == 0:
             remove_checkpoint_files(join(self.output_folder, "checkpoint_latest.safetensors"))
 
-        # shut down dataloaders
-        old_stdout = sys.stdout
-        with open(os.devnull, 'w') as f:
-            sys.stdout = f
+        self._shutdown_dataloaders()
+
+        empty_cache(self.device)
+        self.print_to_log_file("Training done.")
+
+    def _shutdown_dataloaders(self):
+        """
+        Stops the data augmentation workers, at the end of training and before the exit on a termination signal. Exiting
+        with the workers still running kills them under the augmenters' results threads, which then print "One or more
+        background workers are no longer alive" tracebacks.
+        """
+        with open(os.devnull, 'w') as f, contextlib.redirect_stdout(f):
             if self.dataloader_train is not None and \
                     isinstance(self.dataloader_train, (NonDetMultiThreadedAugmenter, MultiThreadedAugmenter)):
                 self.dataloader_train._finish()
             if self.dataloader_val is not None and \
                     isinstance(self.dataloader_val, (NonDetMultiThreadedAugmenter, MultiThreadedAugmenter)):
                 self.dataloader_val._finish()
-            sys.stdout = old_stdout
-
-        empty_cache(self.device)
-        self.print_to_log_file("Training done.")
 
     def on_train_epoch_start(self):
         self.network.train()
@@ -1189,9 +1253,9 @@ class nnUNetTrainer(object):
         else:
             l.backward()
             torch.nn.utils.clip_grad_norm_(self.network.parameters(), self.clip_value)
-            self.optimizer.step()
-
-        return {'loss': l.detach().cpu().numpy()}
+        # The loss stays on the device: reading it here would make the host wait for the GPU in every iteration.
+        # run_training moves all of an epoch's losses at once (outputs_to_host)
+        return {'loss': l.detach()}
 
     def on_train_epoch_end(self, train_outputs: List[dict]):
         outputs = collate_outputs(train_outputs)
@@ -1242,9 +1306,6 @@ class nnUNetTrainer(object):
         else:
             # no need for softmax
             output_seg = output.argmax(1)[:, None]
-            predicted_segmentation_onehot = torch.zeros(output.shape, device=output.device, dtype=torch.float16)
-            predicted_segmentation_onehot.scatter_(1, output_seg, 1)
-            del output_seg
 
         if self.label_manager.has_ignore_label:
             if not self.label_manager.has_regions:
@@ -1261,11 +1322,21 @@ class nnUNetTrainer(object):
         else:
             mask = None
 
-        tp, fp, fn, _ = get_tp_fp_fn_tn(predicted_segmentation_onehot, target, axes=axes, mask=mask)
+        if self.label_manager.has_regions:
+            tp, fp, fn, _ = get_tp_fp_fn_tn(predicted_segmentation_onehot, target, axes=axes, mask=mask)
+        else:
+            # Softmax training: the prediction is a single label map, so the confusion matrix over
+            # (prediction, target) carries everything and no (b, num_classes, *patch_size) one hot has to
+            # exist. That one hot is what made this step the VRAM ceiling on many-class datasets - at 118
+            # classes / 192^3 / bs2 it is ~3.3 GB on its own, before get_tp_fp_fn_tn allocates on top.
+            # Exactly equivalent to the one hot path (nnunetv2/tests/test_online_evaluation.py).
+            tp, fp, fn = get_tp_fp_fn_from_argmax(output_seg, target, output.shape[1], mask=mask)
+            del output_seg
 
-        tp_hard = tp.detach().cpu().numpy()
-        fp_hard = fp.detach().cpu().numpy()
-        fn_hard = fn.detach().cpu().numpy()
+        # like the training loss (see train_step), these stay on the device and run_training moves them once per epoch
+        tp_hard = tp.detach()
+        fp_hard = fp.detach()
+        fn_hard = fn.detach()
         if not self.label_manager.has_regions:
             # if we train with regions all segmentation heads predict some kind of foreground. In conventional
             # (softmax training) there needs tobe one output for the background. We are not interested in the
@@ -1275,7 +1346,7 @@ class nnUNetTrainer(object):
             fp_hard = fp_hard[1:]
             fn_hard = fn_hard[1:]
 
-        return {'loss': l.detach().cpu().numpy(), 'tp_hard': tp_hard, 'fp_hard': fp_hard, 'fn_hard': fn_hard}
+        return {'loss': l.detach(), 'tp_hard': tp_hard, 'fp_hard': fp_hard, 'fn_hard': fn_hard}
 
     def on_validation_epoch_end(self, val_outputs: List[dict]):
         outputs_collated = collate_outputs(val_outputs)
@@ -1302,7 +1373,13 @@ class nnUNetTrainer(object):
         else:
             loss_here = np.mean(outputs_collated['loss'])
 
-        global_dc_per_class = [i for i in [2 * i / (2 * i + j + k) for i, j, k in zip(tp, fp, fn)]]
+        # A class absent from BOTH prediction and target gives 0/0 = nan, and the nanmean below drops it -
+        # which is what we want: it carries no information about this epoch. On a dataset with many classes
+        # that is a good fraction of the label set every epoch, so the invalid-value warning would be printed
+        # for every validation epoch; silence it rather than perturbing the denominator, which would turn
+        # those classes into hard zeros and pull mean_fg_dice down.
+        with np.errstate(invalid='ignore', divide='ignore'):
+            global_dc_per_class = [i for i in [2 * i / (2 * i + j + k) for i, j, k in zip(tp, fp, fn)]]
         mean_fg_dice = np.nanmean(global_dc_per_class)
         self.logger.log('mean_fg_dice', mean_fg_dice, self.current_epoch)
         self.logger.log('dice_per_class_or_region', global_dc_per_class, self.current_epoch)
@@ -1331,23 +1408,42 @@ class nnUNetTrainer(object):
         if save_latest_checkpoint or exit_now:
             self.save_checkpoint(join(self.output_folder, 'checkpoint_latest.safetensors'))
 
-        # handle 'best' checkpointing. ema_fg_dice is computed by the logger and can be accessed like this
-        if self._best_ema is None or self.logger.get_value('ema_fg_dice', step=-1) > self._best_ema:
-            self._best_ema = self.logger.get_value('ema_fg_dice', step=-1)
-            self.print_to_log_file(f"Yayy! New best EMA pseudo Dice: {np.round(self._best_ema, decimals=4)}")
-            self.save_checkpoint(join(self.output_folder, 'checkpoint_best.safetensors'))
+        self._maybe_save_checkpoint_best()
 
         if self.global_rank == 0:
-            self.logger.plot_progress_png(self.output_folder)
+            self._maybe_plot_progress(force=exit_now or self.current_epoch == self.num_epochs - 1)
 
         if exit_now:
             self.print_to_log_file("Epoch ended and termination signal received. checkpoint_latest is written, "
                                    "so let's exit gracefully. Now lets raise the keyboard into the sky and interrupt "
                                    "this madness. Expecting either the user or an automated script to continue this "
                                    "training with --c.")
+            self._shutdown_dataloaders()
             sys.exit(0)
 
         self.current_epoch += 1
+
+    def _maybe_save_checkpoint_best(self):
+        """
+        Writes checkpoint_best if this epoch's EMA pseudo Dice is the best so far. Called by on_epoch_end; a trainer
+        that wants only some epochs to compete overrides this.
+        """
+        # ema_fg_dice is computed by the logger and can be accessed like this
+        if self._best_ema is None or self.logger.get_value('ema_fg_dice', step=-1) > self._best_ema:
+            self._best_ema = self.logger.get_value('ema_fg_dice', step=-1)
+            self.print_to_log_file(f"Yayy! New best EMA pseudo Dice: {np.round(self._best_ema, decimals=4)}")
+            self.save_checkpoint(join(self.output_folder, 'checkpoint_best.safetensors'))
+
+    def _maybe_plot_progress(self, force: bool = False):
+        """
+        Writes progress.png, at most every self.plot_progress_every_s seconds. Plotting takes 0.4 - 1.2 s and grows with
+        the number of epochs, which adds up when epochs are short. The first epoch of a run is always plotted, and
+        on_epoch_end forces the last epoch and an epoch that ends with a termination signal.
+        """
+        now = time()
+        if force or self._last_progress_plot is None or now - self._last_progress_plot >= self.plot_progress_every_s:
+            self.logger.plot_progress_png(self.output_folder)
+            self._last_progress_plot = now
 
     def save_checkpoint(self, filename: str) -> None:
         """
@@ -1429,7 +1525,7 @@ class nnUNetTrainer(object):
             else:
                 self.network.load_state_dict(new_state_dict)
         if 'optimizer_state' in checkpoint:
-            self.optimizer.load_state_dict(checkpoint['optimizer_state'])
+            self._load_optimizer_state(checkpoint['optimizer_state'])
         elif self.current_epoch < self.num_epochs:
             # checkpoint_final has no optimizer state. Only matters if training continues from it
             self.print_to_log_file(NO_OPTIMIZER_STATE_WARNING)
@@ -1486,6 +1582,21 @@ class nnUNetTrainer(object):
             immutable_weights=True,
         )
         perf_logger.info("Saved compiled model")
+
+    def _load_optimizer_state(self, optimizer_state: dict) -> None:
+        """
+        Optimizer.load_state_dict also restores the implementation flags (fused, foreach) saved with the state. A
+        checkpoint written by a differently built optimizer would switch ours: a foreach checkpoint (any training from
+        before SGD was fused) turns the fused SGD of configure_optimizers into a non-fused one that GradScaler still
+        treats as fused, an AssertionError in the first step. Keep the implementation configure_optimizers chose; the
+        state itself is the same for all of them.
+        """
+        impl_flags = [{k: g[k] for k in ('fused', 'foreach') if k in g} for g in self.optimizer.param_groups]
+        self.optimizer.load_state_dict(optimizer_state)
+        for group, flags in zip(self.optimizer.param_groups, impl_flags):
+            group.update(flags)
+        # a foreach checkpoint has no momentum buffer for parameters that had not received a gradient yet
+        zero_missing_momentum_buffers(self.optimizer)
 
     @torch.inference_mode()
     def perform_actual_validation(self, save_probabilities: bool = False, step_size: float = 0.5, validation_path: str = "validation"):
@@ -1778,14 +1889,16 @@ class nnUNetTrainer(object):
             train_outputs = []
             for batch_id in range(self.num_iterations_per_epoch):
                 train_outputs.append(self.train_step(next(self.dataloader_train)))
-            self.on_train_epoch_end(train_outputs)
+            # the steps leave their outputs on the device (see train_step); the epoch-end hooks get them as numpy
+            # arrays, all moved at once
+            self.on_train_epoch_end(outputs_to_host(train_outputs))
 
             with torch.no_grad():
                 self.on_validation_epoch_start()
                 val_outputs = []
                 for batch_id in range(self.num_val_iterations_per_epoch):
                     val_outputs.append(self.validation_step(next(self.dataloader_val)))
-                self.on_validation_epoch_end(val_outputs)
+                self.on_validation_epoch_end(outputs_to_host(val_outputs))
 
             self.on_epoch_end()
             if os.getenv("nnUNet_stop_first_epoch", "0") == "1":

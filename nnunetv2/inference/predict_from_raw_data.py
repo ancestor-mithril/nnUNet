@@ -96,6 +96,9 @@ class Timer:
 
 
 class nnUNetPredictor(object):
+    # file ending of saved probabilities: a case counts as predicted (overwrite=False) only if this file exists too
+    probabilities_file_ending = '.npz'
+
     def __init__(self,
                  tile_step_size: float = 0.5,
                  use_gaussian: bool = True,
@@ -377,7 +380,7 @@ class nnUNetPredictor(object):
         if not overwrite and output_filename_truncated is not None:
             tmp = [isfile(i + self.dataset_json['file_ending']) for i in output_filename_truncated]
             if save_probabilities:
-                tmp2 = [isfile(i + '.npz') for i in output_filename_truncated]
+                tmp2 = [isfile(i + self.probabilities_file_ending) for i in output_filename_truncated]
                 tmp = [i and j for i, j in zip(tmp, tmp2)]
             not_existing_indices = [i for i, j in enumerate(tmp) if not j]
 

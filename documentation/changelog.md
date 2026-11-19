@@ -1,5 +1,104 @@
 # Changes that affect custom trainers
 
+## Streaming inference writes probabilities; nnU-Net requires blosc2 >= 4.15
+
+`nnUNetv2_predict_streaming --save_probabilities` and `save_probabilities=True` on the `nnUNetPredictorStreaming`
+`predict_*` methods write the predicted probabilities slice by slice to `<case>.b2nd` (a blosc2 array, `uint16`
+`p * 65535`; `--float32` / `probability_dtype = 'float32'` for lossless float32 probabilities, with a warning about file
+size and speed) plus `<case>.pkl`; see [streaming inference](how-to/run-inference-streaming.md#probability-export) and
+`nnunetv2/inference/streaming_probabilities.py`. The new keyword arguments come last, so existing calls are unchanged;
+`_predict_and_export_streaming` and `_predict_case_2d` take an optional `probability_writer`, and
+`nnUNetPredictor.probabilities_file_ending` (`.npz`; `.b2nd` for the streaming predictor) names the file that
+`--continue_prediction` looks for. `nnUNetv2_ensemble` does not read `.b2nd` files.
+
+nnU-Net now requires `blosc2>=4.15.0` (was `>=4.1.0`): it writes these files 2-3x faster than 4.14.1. blosc2 needs
+Python 3.11 or newer since 4.4.1, so nnU-Net now requires Python >= 3.11 (was 3.10).
+
+## Training patches can always move: a minimum range of patch positions along every axis
+
+`nnUNetDataLoader.get_bbox` draws patch positions only where the final patch lies inside the case, and pads a case
+that is smaller than the patch on both sides, centered. Up to 2.8.1, foreground patches were clamped to that range at
+the lower border only (GitHub PR #3033): near the upper border they reached into the padding, and a case smaller than
+the patch was pushed off-center in foreground patches. With that fixed (clamped at both borders), a case smaller than
+the patch sat at exactly the same place in every training sample, because all spatial augmentation acts about the
+patch center, and a case only a little larger than the patch hardly moved. The network can then tie its decisions to
+positions in the patch. That cost Dice on datasets with such cases.
+
+Now the final patch can always move by at least half its size along every axis: where the range of positions inside
+the case is shorter than `final_patch_size // 2` (cases smaller than, as large as, or up to 1.5 times the patch along an
+axis), it is widened to that, equally on both sides, and the patch reaches into the padding. Cases at least 1.5 times
+the patch are sampled as before. This holds for random and foreground patches, in the training and validation
+dataloaders. The slice axis of 2D configurations (final patch size 1) is unchanged.
+
+Measured with ResEnc-L, 3d_fullres, 5-fold cross-validation on 10 datasets, against the fix above alone: ACDC +0.0060
+and Prostate +0.0153 foreground Dice, better on every fold of both; over the 9 datasets other than Colon +0.0034 on
+average and better on 8; no dataset worse beyond run-to-run noise (BraTS -0.0011). Against earlier runs with the
+lower-border clamp, the fix alone was -0.003 on ACDC and -0.010 on Prostate; with the minimum range both end above
+those runs. 2d and 3d_lowres use the same code but were not measured.
+
+`nnUNetDataLoader` has a new keyword argument `min_patch_range_div` (default 2; the minimum range per axis is
+`final_patch_size // min_patch_range_div`, kept in `self.min_patch_range`). `min_patch_range_div=None` keeps patches
+inside the case and centers small cases, as with the fix alone. Custom trainers that build `nnUNetDataLoader` get the
+new default; a subclass that overrides `get_bbox` without calling it keeps its own placement.
+
+## Progressive growing of patch size: `PGPSEfficiencyMixin` and trainers that use it
+
+`nnunetv2/training/nnUNetTrainer/variants/patch_size/nnUNetTrainer_PGPS.py` adds `PGPSEfficiencyMixin`, the progressive
+patch size schedule of [Progressive Growing of Patch Size](https://arxiv.org/abs/2510.23241) (PGPS-Efficiency), and the
+trainers `nnUNetTrainer_PGPS`, `nnUNetTrainer_PGPS_2700epochs`, `nnUNetTrainer_DASegOrd0_NoMirroring_PGPS_2700epochs_SV`
+and `nnUNetTrainer_DASegOrd0_NoMirroring_PGPS_5400epochs_SV` (see [Train models](how-to/train-models.md)). Mix it in first
+to give your own trainer PGPS. Nothing changes for existing trainers.
+
+- The stage patch size is written into the trainer's configuration manager; `plans.json` keeps the configured one. The
+  dataloaders are built again at every stage switch, and only the last stage writes `checkpoint_best`.
+- With `torch.compile` on CUDA, the training steps of stages with up to `pgps_cudagraph_max_patch_voxels` voxels per patch
+  run as CUDA graphs (same numerics). `pgps_cudagraphs = False` switches them off.
+- While a PGPS trainer runs, all compiled code is dropped at every stage switch (`torch._dynamo.reset()`), and in the stage
+  whose bottleneck has a single voxel, InstanceNorm's check for more than one spatial element is skipped inside the steps
+  of that stage only. No global setting of torch.compile is changed.
+
+## Streaming final validation: `StreamingValidationMixin` and trainers that use it
+
+`nnunetv2/training/nnUNetTrainer/variants/validation/nnUNetTrainer_streamingValidation.py` adds
+`StreamingValidationMixin`, which replaces `perform_actual_validation` with one through `nnUNetPredictorStreaming`.
+The stock final validation resamples the full `(num_classes, *original_shape)` probability volume of every case on the
+CPU and runs out of RAM with many classes on large images; the streaming one never builds that volume. Training is
+unchanged. Resampling follows the plans as in `nnUNetv2_predict_streaming`, so the validation segmentations match those
+of the stock validation up to float rounding at argmax boundaries; plans whose resampling streaming cannot reproduce
+(e.g. cubic) get torch trilinear and a warning in the training log. 3d configurations only; no cascade, next-stage
+prediction or probability export; the trainers check this at `initialize`, so an unsupported configuration fails
+before training, not after it.
+
+New trainers: `nnUNetTrainer_SV`, `nnUNetTrainer_2000epochs_NoMirroring_SV`, and
+`nnUNetTrainer_DASegOrd0_NoMirroring_SV` with `_2000epochs_SV` / `_5000epochs_SV` versions (order-0 segmentation
+resampling in the spatial augmentation, no mirroring, `ChunkedLossMixin`). Mix `StreamingValidationMixin` in first
+to give your own trainer streaming validation. Nothing changes for existing trainers.
+
+## NIfTI readers: images already in memory, and fewer copies of the image
+
+`NibabelIO` / `NibabelIOWithReorient` gained `read_nibabel_images` and `seg_to_nibabel`, `SimpleITKIO` /
+`SimpleITKIOWithReorient` gained `read_sitk_images` and `seg_to_sitk`. They take images that are already in memory
+(nibabel / SimpleITK image objects, for example handed over by another tool) and return exactly what `read_images`
+returns for the same images stored as files; `seg_to_*` return the image that `write_seg` would write.
+`read_images` and `write_seg` now go through them. A custom reader that overrides `read_images` or `write_seg` works
+as before; the new in-memory methods do not go through those overrides. `SimpleITKIOWithReorient` no longer defines
+its own `write_seg`: it inherits `SimpleITKIO.write_seg`, which writes `seg_to_sitk`'s (reoriented) image, so the
+written files are unchanged.
+
+`NibabelIO`, `NibabelIOWithReorient`, `SimpleITKIO` and `SimpleITKIOWithReorient` return the same arrays and properties
+as before, bit for bit, but make fewer full-size copies of the image on the way. Reading a 512 x 512 x 1940 CT (int16
+with scl_slope / scl_inter; 1.9 GB as float32) used to raise the peak memory by 7.6 GB with either nibabel reader. Now
+it is 2.9 GB, and the read is about 10 % faster. With the SimpleITK readers it went from 5.7 GB (`SimpleITKIO`) and
+7.6 GB (`SimpleITKIOWithReorient`) to 4.7 GB, which is the peak of SimpleITK's own `ReadImage` for this file.
+
+- The nibabel readers no longer create `get_fdata()`'s float64 image. They read a stored image once in its stored dtype,
+  reorient it as a view and convert it to float32 in small blocks, with nibabel's own scaling in float64.
+- `read_nibabel_images` does not fill the `get_fdata()` cache of the images it is given, so an image you keep does not
+  hold a float64 copy afterwards. It checks shapes, affines and spacings before it reads any voxels.
+- The SimpleITK readers take views of the ITK images' buffers instead of copying them. `SimpleITKIOWithReorient`
+  reorients a 3d image as a view of its buffer and takes the geometry from `DICOMOrient` applied to a one-byte stand-in,
+  instead of reorienting a copy.
+
 ## `nnUNetPredictor` no longer turns on `torch.backends.cudnn.benchmark`
 
 Creating an `nnUNetPredictor` for a CUDA device used to set `torch.backends.cudnn.benchmark = True` for the whole
@@ -33,6 +132,52 @@ in its place, and the mask is not built at all unless the normalization needs it
 - Custom normalization schemes always get the mask, as before. If your scheme's `run()` looks at `seg` only when
   `use_mask_for_norm` is set (like all of nnU-Net's own schemes), set `uses_seg_only_if_use_mask_for_norm = True` on
   the class to let inference skip it. Subclasses do not inherit this setting.
+
+## Training loop: fused SGD, step outputs stay on the GPU, progress.png at most once a minute
+
+Three changes make every training iteration cheaper on the host. Training results are unchanged: fused SGD computes
+the same update as the foreach SGD it replaces, and the logged training loss is the same mean of the same values.
+The gain is largest where the host and not the GPU limits the speed (small patches or networks, fast GPUs, slow CPUs).
+
+- **`configure_optimizers` builds fused SGD on CUDA** (`fused=True`, if the installed torch has it), with its momentum
+  buffers initialised to zero (`zero_missing_momentum_buffers`). Other devices keep foreach SGD. Custom
+  `configure_optimizers` are not affected.
+- **`load_checkpoint` keeps the optimizer implementation that `configure_optimizers` built.**
+  `Optimizer.load_state_dict` also restores the `fused` / `foreach` flags stored in a checkpoint; nnU-Net now puts
+  back the ones of its own optimizer (`_load_optimizer_state`). Trainings started before this change continue with
+  `--c` on fused SGD. An override of `load_checkpoint` that calls `self.optimizer.load_state_dict(...)` itself should
+  call `self._load_optimizer_state(...)` instead: continuing a foreach checkpoint with fused SGD otherwise fails in
+  the first step (`AssertionError` in `GradScaler.step`).
+- **`train_step` and `validation_step` return their outputs as detached tensors on the training device** (the loss;
+  `tp_hard`, `fp_hard`, `fn_hard` of the validation step), no longer as numpy arrays, so that the host does not wait for
+  the GPU in every iteration. `run_training` moves an epoch's outputs to the host at once (`outputs_to_host`, one
+  transfer per key), so `on_train_epoch_end` and `on_validation_epoch_end`, and overrides of them, get the same numpy
+  arrays as before. Only code that calls the steps itself and reads their outputs gets tensors: a custom `run_training`
+  should pass them through `outputs_to_host` too (`collate_outputs` accepts tensors as well). Step overrides that
+  return numpy arrays keep working.
+- **progress.png is written at most every `self.plot_progress_every_s` seconds** (default 60), and always after the
+  first epoch of a run, after the last one and before an exit on a termination signal. Plotting takes 0.4 - 1.2 s per
+  epoch and grows with the number of epochs. `self.plot_progress_every_s = 0` restores a plot after every epoch.
+- **The exit on a termination signal (SIGUSR1) stops the data augmentation workers first** (`_shutdown_dataloaders`,
+  which `on_train_end` uses as well). Before, the workers were killed under the augmenters' results threads, which
+  printed "One or more background workers are no longer alive" tracebacks although the exit was clean.
+
+## `checkpoint_best` is written through `_maybe_save_checkpoint_best`
+
+`on_epoch_end` writes `checkpoint_best` through the new method `_maybe_save_checkpoint_best`, with the same rule as
+before (a new best EMA pseudo Dice). A trainer that wants only some epochs to compete for `checkpoint_best` overrides
+that method instead of copying `on_epoch_end`. Trainers that override `on_epoch_end` are not affected.
+
+## DDP: `oversample_foreground_percent` is the value for the whole batch again after `_set_batch_size_and_oversample`
+
+Under DDP, `_set_batch_size_and_oversample` used to overwrite `oversample_foreground_percent` with the share of the
+current rank. A trainer that called it a second time (for example after changing the batch size) then split that
+share again, and the fraction of foreground-forced samples changed. `oversample_foreground_percent` is now a property:
+setting it sets the value for the whole batch, and after the split reading it returns the rank's share, as before.
+Every call splits the batch's value, and setting the attribute again discards the share. Nothing changes for trainers
+that call the method once (`initialize` does) or that set the attribute and then call it. A subclass that defines
+`oversample_foreground_percent` as a class attribute replaces the property, and under DDP the split then raises an
+`AttributeError`. Set it in `__init__` instead (`nnUNetTrainer.__init__` overrode such a class attribute before, too).
 
 ## Checkpoints are safetensors files now; `.pth` checkpoints are still read
 
@@ -77,6 +222,59 @@ What custom trainers and scripts need to know:
   objects fails when it writes its first checkpoint, `checkpoint_best` after epoch 1, with a `ValueError` naming
   the entries. Under DDP every rank raises it: `save_checkpoint` builds the checkpoint on all ranks and the ones that
   do not write check that it can be stored, so the job ends instead of leaving ranks waiting for one that crashed.
+
+## The compound loss is compiled as a whole, and `_build_loss` picks its loss classes from class attributes
+
+`nnUNetTrainer._build_loss` used to compile only the dice term (`loss.dc = torch.compile(loss.dc)`); it now
+compiles the whole compound loss. The dice and the CE both start from the same logits (softmax vs
+log_softmax), so one graph lets inductor share that work and lets AOTAutograd recompute instead of saving.
+Measured on a 4090 at 119 classes / 128^3 / bs 2 / AMP, fwd+bwd peak over the inputs and time for the
+compound loss: **6.07 GiB / 38.2 ms with only `loss.dc` compiled, 3.78 GiB / 18.9 ms compiled as a whole**
+(eager: 9.30 GiB / 77.6 ms). At 160^3 the same change measured -35 % peak and 1.65x; on a 14 class
+3d_fullres it is 0.59 -> 0.39 GiB.
+
+**This changes results very slightly, in a direction that is an improvement.** The dice term is
+bit-identical. Eager `F.cross_entropy` under autocast dispatches the fused ATen kernel, which is not
+autocast-listed, so its internal `log_softmax` runs in fp16; `torch.compile` decomposes it and the
+`log_softmax` gets the fp32 treatment, which is 4.3x closer to an fp64 reference. The memory saving and the
+accuracy change have the same cause and cannot be separated. Magnitude: ~1e-7 relative on the loss, about
+one ulp on the fp16 gradient.
+
+**Checked against Dice, not only against the loss.** The previous and the new wiring were trained from scratch
+against each other on 8 datasets (ResEnc-L, fold 0, 1000 dense epochs, everything else identical): mean
+difference **-0.14 Dice points, sd 0.53, p = 0.48, 95 % CI -0.59 .. +0.31**, 3 better / 5 worse. That bounds
+any systematic shift well under ±0.6 points. End to end the change is worth ~1 % on few-class datasets and
+**11 % on a 127 class one**, which is where the loss is a large part of the step.
+
+`nnUNetTrainer` also gained two class attributes, **`dice_class`** and **`dc_and_ce_class`**, which
+`_build_loss` instantiates instead of naming `MemoryEfficientSoftDiceLoss` / `DC_and_CE_loss` directly. The
+defaults reproduce the previous behaviour exactly. They exist so a mixin can swap the loss implementation
+without overriding `_build_loss` - see `ChunkedLossMixin`
+(`variants/loss/nnUNetTrainer_chunkedLoss.py`), which selects the batch-chunked CE and dice needed once
+`batch * num_classes * voxels` reaches PyTorch's int32 indexing limit in the `nll_loss2d` backward. If your
+trainer overrides `_build_loss`, nothing changes; if you want the swap to reach it, read the attributes.
+
+With compilation on, the compound loss that `_build_loss` returns (or wraps in `DeepSupervisionWrapper`) is now the
+compiled module (`torch._dynamo.OptimizedModule`) instead of the `DC_and_CE_loss` itself, whose `dc` used to be
+the compiled part. Attribute access is forwarded to the loss, but `isinstance` checks have to look at
+`._orig_mod`.
+
+## The online evaluation no longer builds a one-hot
+
+For softmax training, `nnUNetTrainer.validation_step` computed the green line by scattering the argmax into
+a `(b, num_classes, *patch_size)` one-hot and handing that to `get_tp_fp_fn_tn`. That one-hot is ~3.3 GB at
+118 classes / 192^3 / bs 2, before `get_tp_fp_fn_tn` allocates on top, and it was the memory ceiling of the
+validation step on datasets with many classes. It is replaced by **`get_tp_fp_fn_from_argmax`**
+(`nnunetv2/training/loss/dice.py`), which accumulates the `(num_classes, num_classes)` confusion matrix over
+(prediction, target) in one pass - 133 KB at 129 classes. It is exactly equivalent, including the ignore
+label; region-based training is untouched and still uses `get_tp_fp_fn_tn`. Tests:
+`nnunetv2/tests/test_online_evaluation.py`.
+
+`on_validation_epoch_end` now wraps the Dice division in `np.errstate` instead of letting it warn. A class
+absent from both prediction and target still gives `0/0 = nan` and is still dropped by the `np.nanmean`, so
+`mean_fg_dice` is unchanged - only the warning spam is gone. Custom trainers that read
+`dice_per_class_or_region` should keep expecting `nan` there. For softmax training, `tp_hard`, `fp_hard` and
+`fn_hard` are now integer counts (int64) instead of floats, with the same values.
 
 ## Segmentation resampling: ties are broken differently, and the memory efficient branch is now the default
 
