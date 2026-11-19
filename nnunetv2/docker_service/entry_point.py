@@ -12,6 +12,8 @@ import numpy as np
 import torch.accelerator
 from label_metrics import evaluate_folders, KFoldResult, evaluate_files
 from tqdm import tqdm
+from prettytable import PrettyTable
+
 
 num_epochs_range = [
     "1",
@@ -523,6 +525,7 @@ def validate(args):
             print("Saving compiled model failed. Check the logs above for error")
             raise RuntimeError("Saving compiled model failed")
 
+    summary_holder = {}
     for step_size, other in [
         (0.5, None),  # Must be first
         # (0.5, "dilate_tromb"),
@@ -597,6 +600,7 @@ def validate(args):
         serialized_path = os.path.join(save_folder, f"{evaluation_name}.json")
         metrics_path = os.path.join(save_folder, f"{metrics_name}.json")
         report_path = os.path.join(save_folder, f"{metrics_name}.txt")
+        summary_holder[format_name(args.fold, step_size, other)] = metrics_path
 
         result = evaluate_folders(
             prediction_folder=validation_path,
@@ -633,6 +637,7 @@ def validate(args):
                 serialized_path = os.path.join(save_folder, f"{evaluation_name}_{k}.json")
                 metrics_path = os.path.join(save_folder, f"{metrics_name}_{k}.json")
                 report_path = os.path.join(save_folder, f"{metrics_name}_{k}.txt")
+                summary_holder[f"{format_name(args.fold, step_size, other)}_{k}"] = metrics_path
 
                 prediction_paths = [os.path.join(validation_path, name + ".nii.gz") for name in v]
                 prediction_paths = [x for x in prediction_paths if os.path.isfile(x)]
@@ -654,8 +659,50 @@ def validate(args):
                 print(f"Serialized evaluation written to {serialized_path}")
                 print(f"Validation metrics written to {metrics_path}")
                 print(f"Validation report written to {report_path}")
+    dice_table = make_global_dice_table(summary_holder)
+    with open(os.path.join(save_folder, f"dice_summary.json"), "w") as f:
+        f.write(str(dice_table))
 
 
+def make_global_dice_table(
+    reports: dict[str, str | Path],
+    decimals: int = 5,
+) -> str:
+    rows = []
+    label_names = None
+
+    for report_name, path in reports.items():
+        with Path(path).open("r", encoding="utf-8") as file:
+            data = json.load(file)
+
+        if label_names is None:
+            label_names = [
+                name
+                for name, index in sorted(
+                    data["labels"].items(),
+                    key=lambda item: item[1],
+                )
+                if index != 0
+            ]
+
+        rows.append(
+            [
+                report_name,
+                *[
+                    f"{data['global_metrics'][label]['dice']:.{decimals}f}"
+                    for label in label_names
+                ],
+            ]
+        )
+
+    table = PrettyTable()
+    table.field_names = ["Report", *label_names]
+    table.align["Report"] = "l"
+
+    for row in rows:
+        table.add_row(row)
+
+    return table.get_string()
 
 def cross_validate(args):
     print("Sleeping for 20 seconds...")
