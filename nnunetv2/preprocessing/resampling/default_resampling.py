@@ -153,7 +153,7 @@ def resample_data_or_seg(data: np.ndarray, new_shape: Union[Tuple[float, ...], L
     new_shape = np.array(new_shape)
     if dtype_out is None:
         dtype_out = data.dtype
-    reshaped_final = np.zeros((data.shape[0], *new_shape), dtype=dtype_out)
+    reshaped_final = np.empty((data.shape[0], *new_shape), dtype=dtype_out)
     if np.any(shape != new_shape):
         # float32, not float64. scipy.ndimage accumulates in double internally no matter what dtype the
         # array has, and for order > 1 it forces a float64 spline prefilter on top of that, so upcasting
